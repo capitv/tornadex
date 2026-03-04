@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tornado.IO — Be the Biggest Storm</title>
+  <meta name="description"
+    content="Multiplayer IO game where you control a tornado. Destroy buildings, absorb rivals, become the ultimate storm!" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles/index.css" />
+</head>
+
+<body>
+  <!-- Three.js Canvas -->
+  <canvas id="game-canvas"></canvas>
+
+  <!-- Death Vignette Overlay (dramatic darkening effect) -->
+  <div id="death-vignette"></div>
+
+  <!-- Reconnecting Overlay (shown while Socket.IO attempts to reconnect) -->
+  <div id="reconnect-overlay" class="hidden">
+    <div class="reconnect-box">
+      <div class="reconnect-spinner"></div>
+      <p class="reconnect-title">Reconnecting...</p>
+      <p class="reconnect-sub">Your tornado is holding on — don't leave!</p>
+    </div>
+  </div>
+
+  <!-- Main Menu -->
+  <div id="main-menu" class="overlay">
+    <div class="menu-container">
+      <h1 class="game-title">
+        <span class="tornado-icon">🌪️</span>
+        TORNADO<span class="title-accent">.IO</span>
+      </h1>
+      <p class="tagline">Destroy everything. Absorb everyone. Be the storm.</p>
+      <div class="input-group">
+        <input type="text" id="player-name" placeholder="Your tornado name..." maxlength="16" autocomplete="off" />
+        <button id="play-btn">▶ PLAY</button>
+      </div>
+      <!-- Seed row: optional seed input + current seed display -->
+      <div class="seed-row">
+        <input type="number" id="seed-input" class="seed-input" placeholder="Seed (optional)" min="1" max="4294967295" autocomplete="off" />
+        <span class="seed-display" id="seed-display" title="Click to copy shareable link">MAP SEED: —</span>
+      </div>
+      <!-- Desktop controls hint (hidden on touch devices via JS) -->
+      <div class="controls-info" id="controls-desktop">
+        <span>🖱️ Mouse to move</span>
+        <span>🏠 Destroy objects to grow</span>
+        <span>🌪️ Absorb smaller tornados</span>
+        <span>E — Boost</span>
+      </div>
+      <!-- Mobile controls hint (shown on touch devices via JS) -->
+      <div class="controls-info hidden" id="controls-mobile">
+        <span>🕹️ Joystick to move</span>
+        <span>🏠 Destroy objects to grow</span>
+        <span>🌪️ Absorb smaller tornados</span>
+        <span>BOOST button — speed burst</span>
+      </div>
+
+      <!-- Leaderboard button -->
+      <div class="menu-leaderboard-row">
+        <button id="leaderboard-btn" class="leaderboard-menu-btn">
+          <span>🏆</span> ALL-TIME LEADERBOARD
+        </button>
+      </div>
+
+      <!-- Graphics Quality Settings -->
+      <div class="graphics-settings">
+        <span class="graphics-settings-label">GRAPHICS</span>
+        <div class="graphics-btn-group" id="graphics-btn-group">
+          <button class="graphics-btn" data-quality="low" id="gfx-btn-low">LOW</button>
+          <button class="graphics-btn" data-quality="medium" id="gfx-btn-medium">MEDIUM</button>
+          <button class="graphics-btn" data-quality="high" id="gfx-btn-high">HIGH</button>
+        </div>
+        <span class="graphics-settings-hint" id="graphics-hint">Applies immediately — new tornados use updated particle counts</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Death Screen -->
+  <div id="death-screen" class="overlay hidden">
+    <div class="death-container">
+      <!-- Dramatic absorbed message -->
+      <div class="death-header">
+        <div class="death-icon">💀</div>
+        <h2 class="death-title">ABSORBED!</h2>
+        <p id="death-killer">by <span id="death-killer-name">another tornado</span></p>
+      </div>
+
+      <!-- Stats panel -->
+      <div class="death-stats">
+        <div class="death-stat">
+          <span class="death-stat-value" id="ds-score">0</span>
+          <span class="death-stat-label">FINAL SCORE</span>
+        </div>
+        <div class="death-stat">
+          <span class="death-stat-value" id="ds-destroyed">0</span>
+          <span class="death-stat-label">DESTROYED</span>
+        </div>
+        <div class="death-stat">
+          <span class="death-stat-value" id="ds-time">0s</span>
+          <span class="death-stat-label">SURVIVED</span>
+        </div>
+        <div class="death-stat">
+          <span class="death-stat-value" id="ds-category">F0</span>
+          <span class="death-stat-label">MAX CATEGORY</span>
+        </div>
+      </div>
+
+      <!-- Tip -->
+      <p class="death-tip" id="death-tip">Tip: Boost into smaller tornados to absorb them instantly!</p>
+
+      <!-- Respawn button -->
+      <button id="respawn-btn">
+        <span class="respawn-btn-icon">🌪️</span>
+        <span>PLAY AGAIN</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Leaderboard Modal -->
+  <div id="leaderboard-modal" class="lb-modal hidden" role="dialog" aria-modal="true" aria-label="All-time Leaderboard">
+    <div class="lb-modal-box">
+      <div class="lb-modal-header">
+        <div class="lb-modal-tabs">
+          <button class="lb-tab active" data-tab="alltime">ALL-TIME</button>
+          <button class="lb-tab" data-tab="daily">TODAY</button>
+        </div>
+        <button id="lb-close-btn" class="lb-close" aria-label="Close leaderboard">&times;</button>
+      </div>
+      <div id="lb-loading" class="lb-loading">Loading...</div>
+      <div id="lb-error" class="lb-error hidden">Failed to load leaderboard.</div>
+      <div class="lb-table-wrap">
+        <table id="lb-table" class="lb-table hidden">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Name</th>
+              <th>Score</th>
+              <th>Category</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody id="lb-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+
+    <!-- Top-left: Score display -->
+    <div id="score-display">
+      <span class="score-label">SCORE</span>
+      <span id="score-value">0</span>
+    </div>
+
+    <!-- Top-right: Leaderboard -->
+    <div id="leaderboard">
+      <h3>TOP TORNADOS</h3>
+      <ol id="leaderboard-list"></ol>
+    </div>
+
+    <!-- Top-right below leaderboard: Kill Feed -->
+    <div id="kill-feed"></div>
+
+    <!-- Bottom-left: Ping indicator (above minimap) -->
+    <div id="ping-display">
+      <span id="ping-dot" data-quality="unknown"></span>
+      <span id="ping-value">--</span>
+    </div>
+
+    <!-- Bottom-left: Minimap -->
+    <div id="minimap-container">
+      <canvas id="minimap" width="160" height="160"></canvas>
+      <div id="minimap-label">MAP</div>
+    </div>
+
+    <!-- Bottom-left above minimap: Stamina -->
+    <div id="boost-display">
+      <div id="boost-key">E</div>
+      <div id="stamina-bar-wrap">
+        <div id="stamina-bar">
+          <div id="stamina-fill"></div>
+        </div>
+        <span id="stamina-label">BOOST</span>
+      </div>
+    </div>
+
+    <!-- Top-center: Active Power-up Effects -->
+    <div id="powerup-display">
+      <div id="powerup-effects"></div>
+    </div>
+
+    <!-- Bottom-right: Seed indicator (tiny, unobtrusive) -->
+    <div id="seed-hud" title="Click to copy shareable link"></div>
+
+    <!-- Bottom-center: Category + Size bar -->
+    <div id="size-display">
+      <div id="category-badge">
+        <span id="category-icon">🌪️</span>
+        <span id="category-name">F0</span>
+      </div>
+      <div id="size-bar-wrap">
+        <div id="size-bar">
+          <div id="size-fill"></div>
+          <!-- Category segment markers -->
+          <div class="size-bar-tick" style="left:16.66%"></div>
+          <div class="size-bar-tick" style="left:33.33%"></div>
+          <div class="size-bar-tick" style="left:50%"></div>
+          <div class="size-bar-tick" style="left:66.66%"></div>
+          <div class="size-bar-tick" style="left:83.33%"></div>
+        </div>
+        <div id="size-bar-labels">
+          <span>F0</span><span>F1</span><span>F2</span><span>F3</span><span>F4</span><span>F5</span>
+        </div>
+      </div>
+      <span id="size-label">SIZE: 1.0</span>
+    </div>
+
+  </div>
+
+  <!-- Swap controls hint immediately for touch/mobile users -->
+  <script>
+    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+      var d = document.getElementById('controls-desktop');
+      var m = document.getElementById('controls-mobile');
+      if (d) d.classList.add('hidden');
+      if (m) m.classList.remove('hidden');
+    }
+  </script>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+
+</html>
