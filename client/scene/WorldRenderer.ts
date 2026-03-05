@@ -1478,6 +1478,11 @@ export class WorldRenderer {
 
             const keys = DETAIL_KEYS[inst.type] ?? [];
             if (keys.length === 0) continue;
+
+            // Restore canonical matrix FIRST so we apply suction from the original
+            // position — prevents liftY/tilt from accumulating frame over frame.
+            this._restoreObjectMatrix(id);
+
             const primaryKey = keys[0];
             const im = this.instancedMeshes[primaryKey]?.[0];
             if (!im) continue;
@@ -1501,8 +1506,9 @@ export class WorldRenderer {
             this._tiltQuat.set(tiltAxisX * sinHalf, 0, tiltAxisZ * sinHalf, cosHalf).normalize();
             this._suctionQuat.multiplyQuaternions(this._tiltQuat, this._suctionQuat);
 
+            // Apply lift as a fixed offset from the canonical position (not accumulated)
             const liftY = strength * nearestTornado.radius * 0.25;
-            this._suctionPos.y = this._suctionPos.y + liftY;
+            this._suctionPos.y += liftY;
 
             const squish = 1.0 - strength * 0.12;
             const stretch = 1.0 + strength * 0.08;

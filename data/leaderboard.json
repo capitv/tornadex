@@ -225,6 +225,14 @@
   },
   {
     "name": "Tornado",
+    "score": 105,
+    "maxCategory": "F1",
+    "kills": 0,
+    "duration": 26,
+    "date": "2026-03-05"
+  },
+  {
+    "name": "Tornado",
     "score": 90,
     "maxCategory": "F1",
     "kills": 0,

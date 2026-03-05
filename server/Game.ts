@@ -429,8 +429,12 @@ export class Game {
                     const dist = Math.sqrt(dx * dx + dy * dy);
 
                     // Can destroy if tornado radius is big enough and close enough.
-                    // Use 1.8× player radius so the collision zone matches the visual funnel width.
-                    if (player.radius >= obj.size && dist < player.radius * 1.8 + obj.size) {
+                    // Collision zone scales quadratically to match the visual funnel width:
+                    // small tornadoes (r<2) use a tight radius, large ones expand dramatically.
+                    const collisionR = player.radius < 2
+                        ? player.radius * 1.8
+                        : player.radius * 1.8 + (player.radius - 2) * (player.radius - 2) * 0.5;
+                    if (player.radius >= obj.size && dist < collisionR + obj.size) {
                         this.world.destroyObject(obj);
                         const values = OBJECT_VALUES[obj.type];
                         // Rapid Growth power-up doubles radius gain from destroyed objects
@@ -465,7 +469,10 @@ export class Game {
                 const dist = a.distanceTo(b);
                 const touchDist = a.radius + b.radius;
 
-                if (dist < touchDist * 1.5) {
+                // Scale absorption range with tornado size — larger tornadoes have wider suction
+                const maxR = Math.max(a.radius, b.radius);
+                const absorbMult = maxR < 2 ? 1.5 : 1.5 + (maxR - 2) * 0.3;
+                if (dist < touchDist * absorbMult) {
                     const bSpawnProtected = b.isSpawnProtected(now);
                     const aSpawnProtected = a.isSpawnProtected(now);
 
@@ -559,7 +566,10 @@ export class Game {
                 const vDy = player.y - vehicle.y;
                 const vDist = Math.sqrt(vDx * vDx + vDy * vDy);
 
-                if (vDist < player.radius * 1.8 + VEHICLE_COLLISION_RADIUS) {
+                const vCollR = player.radius < 2
+                    ? player.radius * 1.8
+                    : player.radius * 1.8 + (player.radius - 2) * (player.radius - 2) * 0.5;
+                if (vDist < vCollR + VEHICLE_COLLISION_RADIUS) {
                     this.world.destroyVehicle(vehicle);
                     const growthMult = player.hasEffect('growth') ? GROWTH_BOOST_MULTIPLIER : 1.0;
                     player.grow(VEHICLE_POINTS, VEHICLE_GROWTH * growthMult);
