@@ -112,7 +112,6 @@ export class HUD {
         this.maxSizeEl.id = 'max-size-msg';
         this.maxSizeEl.className = 'max-size-msg';
         this.maxSizeEl.textContent = 'MAX SIZE!';
-        this.sizeDisplay.style.position = 'relative';
         this.sizeDisplay.appendChild(this.maxSizeEl);
     }
 
