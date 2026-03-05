@@ -100,10 +100,16 @@ export function getSmokeTexture(): THREE.CanvasTexture {
     return _smokeTexture;
 }
 
+// ---- Cache for sub-textures keyed by region coordinates ----
+const _subTextureCache = new Map<string, THREE.CanvasTexture>();
+
 // ---- Returns a sub-texture covering a specific atlas region.
 //      The sub-canvas is drawn by sampling only the relevant quadrant
 //      so the THREE.js UV range [0,1] maps naturally to that region.     ----
 export function getAtlasSubTexture(region: AtlasRegion): THREE.CanvasTexture {
+    const cacheKey = `${region.u0}_${region.v0}_${region.u1}_${region.v1}`;
+    const cached = _subTextureCache.get(cacheKey);
+    if (cached) return cached;
     const SIZE    = 256;
     const canvas  = document.createElement('canvas');
     canvas.width  = SIZE;
@@ -121,6 +127,7 @@ export function getAtlasSubTexture(region: AtlasRegion): THREE.CanvasTexture {
 
     const tex = new THREE.CanvasTexture(canvas);
     tex.needsUpdate = true;
+    _subTextureCache.set(cacheKey, tex);
     return tex;
 }
 

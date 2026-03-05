@@ -4,7 +4,7 @@
 //
 // Each active power-up is rendered as:
 //   - A sphere mesh with emissive colour (blue/green/yellow)
-//   - A PointLight for a local glow halo
+//   - An outer glow sphere (BackSide) for a soft halo
 //   - A sine-wave Y animation (bobbing)
 //   - A slow Y-axis rotation on the sphere
 //
@@ -15,10 +15,10 @@ import * as THREE from 'three';
 import type { PowerUp, PowerUpType } from '../../shared/types.js';
 
 // Visual config per type
-const TYPE_CONFIG: Record<PowerUpType, { color: number; emissive: number; lightIntensity: number }> = {
-    speed:  { color: 0x42a5f5, emissive: 0x1565c0, lightIntensity: 1.8 },  // blue
-    growth: { color: 0x66bb6a, emissive: 0x1b5e20, lightIntensity: 1.8 },  // green
-    shield: { color: 0xffd54f, emissive: 0xe65100, lightIntensity: 2.0 },  // golden yellow
+const TYPE_CONFIG: Record<PowerUpType, { color: number; emissive: number }> = {
+    speed:  { color: 0x42a5f5, emissive: 0x1565c0 },  // blue
+    growth: { color: 0x66bb6a, emissive: 0x1b5e20 },  // green
+    shield: { color: 0xffd54f, emissive: 0xe65100 },  // golden yellow
 };
 
 // How high the orb floats above the ground baseline
@@ -33,7 +33,6 @@ const ORB_RADIUS = 0.7;
 interface OrbEntry {
     group: THREE.Group;
     mesh: THREE.Mesh;
-    light: THREE.PointLight;
     groundElevation: number;
     // Per-orb phase offset so all orbs don't bob in sync
     phaseOffset: number;
@@ -43,6 +42,24 @@ export class PowerUpRenderer {
     private scene: THREE.Scene;
     // Map from power-up id → orb entry
     private orbs: Map<number, OrbEntry> = new Map();
+
+    // Shared geometries — created once, reused across all orbs to avoid redundant GPU uploads
+    private static _sharedOrbGeo: THREE.SphereGeometry | null = null;
+    private static _sharedGlowGeo: THREE.SphereGeometry | null = null;
+
+    private static getOrbGeometry(): THREE.SphereGeometry {
+        if (!PowerUpRenderer._sharedOrbGeo) {
+            PowerUpRenderer._sharedOrbGeo = new THREE.SphereGeometry(ORB_RADIUS, 16, 12);
+        }
+        return PowerUpRenderer._sharedOrbGeo;
+    }
+
+    private static getGlowGeometry(): THREE.SphereGeometry {
+        if (!PowerUpRenderer._sharedGlowGeo) {
+            PowerUpRenderer._sharedGlowGeo = new THREE.SphereGeometry(ORB_RADIUS * 1.35, 12, 10);
+        }
+        return PowerUpRenderer._sharedGlowGeo;
+    }
 
     constructor(scene: THREE.Scene) {
         this.scene = scene;
@@ -54,8 +71,11 @@ export class PowerUpRenderer {
      */
     update(powerUps: PowerUp[]): void {
         const activeIds = new Set<number>();
+        const allIds = new Set<number>();
 
         for (const pu of powerUps) {
+            allIds.add(pu.id);
+
             if (!pu.active) {
                 // Collected — hide if we were showing it
                 const orb = this.orbs.get(pu.id);
@@ -80,10 +100,10 @@ export class PowerUpRenderer {
 
         // Remove orbs for power-up IDs that are no longer in the list
         // (shouldn't normally happen, but guards against server restarts)
+        // Use the allIds Set already built above instead of powerUps.some() linear search
         for (const [id, orb] of this.orbs) {
-            if (!powerUps.some(p => p.id === id)) {
+            if (!allIds.has(id)) {
                 this.scene.remove(orb.group);
-                orb.mesh.geometry.dispose();
                 (orb.mesh.material as THREE.Material).dispose();
                 this.orbs.delete(id);
             }
@@ -104,10 +124,6 @@ export class PowerUpRenderer {
 
             // Spin slowly around Y
             orb.mesh.rotation.y = timeSec * 1.2 + orb.phaseOffset;
-
-            // Pulse the light intensity slightly
-            orb.light.intensity = TYPE_CONFIG[orb.mesh.userData.type as PowerUpType].lightIntensity
-                * (0.85 + 0.15 * Math.sin(timeSec * 2.5 + orb.phaseOffset));
         }
     }
 
@@ -115,7 +131,6 @@ export class PowerUpRenderer {
     dispose(): void {
         for (const orb of this.orbs.values()) {
             this.scene.remove(orb.group);
-            orb.mesh.geometry.dispose();
             (orb.mesh.material as THREE.Material).dispose();
         }
         this.orbs.clear();
@@ -126,8 +141,8 @@ export class PowerUpRenderer {
     private createOrb(id: number, type: PowerUpType, wx: number, wy: number): OrbEntry {
         const cfg = TYPE_CONFIG[type];
 
-        // Sphere
-        const geo = new THREE.SphereGeometry(ORB_RADIUS, 16, 12);
+        // Sphere (shared geometry)
+        const geo = PowerUpRenderer.getOrbGeometry();
         const mat = new THREE.MeshStandardMaterial({
             color: cfg.color,
             emissive: cfg.emissive,
@@ -141,8 +156,8 @@ export class PowerUpRenderer {
         mesh.userData.type = type;
         mesh.castShadow = false;
 
-        // Outer glow ring (a slightly larger transparent sphere)
-        const glowGeo = new THREE.SphereGeometry(ORB_RADIUS * 1.35, 12, 10);
+        // Outer glow ring (shared geometry)
+        const glowGeo = PowerUpRenderer.getGlowGeometry();
         const glowMat = new THREE.MeshBasicMaterial({
             color: cfg.color,
             transparent: true,
@@ -152,13 +167,9 @@ export class PowerUpRenderer {
         });
         const glowMesh = new THREE.Mesh(glowGeo, glowMat);
 
-        // Point light for environmental glow
-        const light = new THREE.PointLight(cfg.color, cfg.lightIntensity, 12);
-
         const group = new THREE.Group();
         group.add(mesh);
         group.add(glowMesh);
-        group.add(light);
 
         // Position the group at the world-space XZ position
         // Y will be animated each frame; start at BASE_HEIGHT so it's not at origin
@@ -169,7 +180,6 @@ export class PowerUpRenderer {
         const entry: OrbEntry = {
             group,
             mesh,
-            light,
             groundElevation: 0,       // flat world baseline; refine below if terrain height available
             phaseOffset: (id * 1.618) % (Math.PI * 2),  // golden-ratio spread so orbs desync
         };

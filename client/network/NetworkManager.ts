@@ -117,6 +117,8 @@ export class NetworkManager {
             // Update the cached state for the next delta
             this.cachedFullState = reconstructed;
             if (this.onStateCallback) {
+                // Tag so the debug overlay can distinguish full vs delta
+                (reconstructed as any)._isDelta = true;
                 this.onStateCallback(reconstructed);
             }
         });
@@ -360,7 +362,7 @@ export class NetworkManager {
             activeEffects: dp.activeEffects !== undefined ? dp.activeEffects : prev.activeEffects,
             protected:     dp.protected     !== undefined ? dp.protected     : prev.protected,
             afk:           dp.afk           !== undefined ? dp.afk           : prev.afk,
-            lastInputSeq:  prev.lastInputSeq,
+            lastInputSeq:  dp.lastInputSeq  !== undefined ? dp.lastInputSeq  : prev.lastInputSeq,
         };
     }
 
@@ -384,7 +386,7 @@ export class NetworkManager {
             activeEffects: dp.activeEffects ?? [],
             protected:     dp.protected     ?? false,
             afk:           dp.afk           ?? false,
-            lastInputSeq:  0,
+            lastInputSeq:  dp.lastInputSeq  ?? 0,
         };
     }
 }

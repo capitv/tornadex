@@ -206,7 +206,8 @@ export class ParticleSystem {
         if (bestIdx === -1) return null;
 
         const recycled = this.active[bestIdx];
-        this.active.splice(bestIdx, 1);
+        this.active[bestIdx] = this.active[this.active.length - 1];
+        this.active.pop();
         return recycled;
     }
 
@@ -513,11 +514,28 @@ export class ParticleSystem {
             this.positions[i * 3 + 2] = 0;
             this.sizes[i] = 0;
         }
-        this._prevActiveCount = this.active.length;
 
-        this.points.geometry.attributes.position.needsUpdate = true;
-        this.points.geometry.attributes.color.needsUpdate = true;
-        this.points.geometry.attributes.size.needsUpdate = true;
+        const activeCount = this.active.length;
+        const hadOrHasActive = activeCount > 0 || this._prevActiveCount > 0;
+        if (hadOrHasActive) {
+            const uploadCount = Math.max(activeCount, this._prevActiveCount);
+
+            const posAttr = this.points.geometry.attributes.position as THREE.BufferAttribute;
+            posAttr.clearUpdateRanges();
+            posAttr.addUpdateRange(0, uploadCount * 3);
+            posAttr.needsUpdate = true;
+
+            const colAttr = this.points.geometry.attributes.color as THREE.BufferAttribute;
+            colAttr.clearUpdateRanges();
+            colAttr.addUpdateRange(0, uploadCount * 3);
+            colAttr.needsUpdate = true;
+
+            const sizeAttr = this.points.geometry.attributes.size as THREE.BufferAttribute;
+            sizeAttr.clearUpdateRanges();
+            sizeAttr.addUpdateRange(0, uploadCount);
+            sizeAttr.needsUpdate = true;
+        }
+        this._prevActiveCount = activeCount;
 
         // ---- Water particle update ----
         // Water particles have reduced gravity (they are being pulled up by the vortex)
@@ -570,10 +588,26 @@ export class ParticleSystem {
             this.waterPositions[i * 3 + 2] = 0;
             this.waterSizes[i] = 0;
         }
-        this._prevWaterActiveCount = this.waterActive.length;
+        const waterActiveCount = this.waterActive.length;
+        const waterHadOrHasActive = waterActiveCount > 0 || this._prevWaterActiveCount > 0;
+        if (waterHadOrHasActive) {
+            const waterUploadCount = Math.max(waterActiveCount, this._prevWaterActiveCount);
 
-        this.waterPoints.geometry.attributes.position.needsUpdate = true;
-        this.waterPoints.geometry.attributes.color.needsUpdate     = true;
-        this.waterPoints.geometry.attributes.size.needsUpdate      = true;
+            const wPosAttr = this.waterPoints.geometry.attributes.position as THREE.BufferAttribute;
+            wPosAttr.clearUpdateRanges();
+            wPosAttr.addUpdateRange(0, waterUploadCount * 3);
+            wPosAttr.needsUpdate = true;
+
+            const wColAttr = this.waterPoints.geometry.attributes.color as THREE.BufferAttribute;
+            wColAttr.clearUpdateRanges();
+            wColAttr.addUpdateRange(0, waterUploadCount * 3);
+            wColAttr.needsUpdate = true;
+
+            const wSizeAttr = this.waterPoints.geometry.attributes.size as THREE.BufferAttribute;
+            wSizeAttr.clearUpdateRanges();
+            wSizeAttr.addUpdateRange(0, waterUploadCount);
+            wSizeAttr.needsUpdate = true;
+        }
+        this._prevWaterActiveCount = waterActiveCount;
     }
 }

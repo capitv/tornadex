@@ -46,7 +46,7 @@ export class Game {
     private grid: SpatialGrid;
     private botManager: BotManager;
     private antiCheat: AntiCheat = new AntiCheat();
-    private tickTimer: ReturnType<typeof setInterval> | null = null;
+    private tickTimer: ReturnType<typeof setTimeout> | null = null;
     private tickCount: number = 0;
     private playerTickCounters: Map<string, number> = new Map();
     private _alivePlayers: Player[] = [];
@@ -84,10 +84,25 @@ export class Game {
     // ---- Session tracking for leaderboard (keyed by socket ID) ----
     private playerJoinTimes: Map<string, number> = new Map();
 
+    // ---- Per-tick cached JSON strings (computed once, reused for all players) ----
+    private _cachedLeaderboardJson: string = '';
+    private _cachedPowerUpsJson: string = '';
+    private _cachedVehiclesJson: string = '';
+
+    // ---- Class-level safeZoneCache (cleared each tick instead of reallocated) ----
+    private safeZoneCache: Map<string, boolean> = new Map();
+
+    // ---- Cached tick timestamp (Date.now() captured once per tick) ----
+    private tickTimestamp: number = 0;
+
+    // ---- Pre-allocated leaderboard sort buffer ----
+    private _leaderboardSortBuf: Player[] = [];
+
     constructor(seed: number) {
         this.world = new World(seed);
         this.grid = new SpatialGrid(GRID_CELL_SIZE);
         this.botManager = new BotManager(this, this.world);
+        this.botManager.setGrid(this.grid);
     }
 
     setCallbacks(
@@ -104,14 +119,35 @@ export class Game {
 
     start(): void {
         logger.info(`Starting game loop at ${TICK_RATE} ticks/sec`);
-        this.tickTimer = setInterval(() => this.tick(), TICK_INTERVAL);
+        // Use self-correcting setTimeout loop instead of setInterval
+        // to account for actual tick duration and prevent drift.
+        this._lastTickTime = Date.now();
+        this.scheduleNextTick();
         // Seed bots immediately — no real players are online yet
         this.botManager.onRealPlayerChange(0);
     }
 
+    /** Wall-clock time of the last tick start (for self-correcting loop). */
+    private _lastTickTime: number = 0;
+
+    private scheduleNextTick(): void {
+        const now = Date.now();
+        const elapsed = now - this._lastTickTime;
+        const drift = elapsed - TICK_INTERVAL;
+        // Clamp correction so we never schedule a negative or zero delay
+        const nextDelay = Math.max(1, TICK_INTERVAL - drift);
+        this.tickTimer = setTimeout(() => {
+            this._lastTickTime = Date.now();
+            this.tick();
+            if (this.tickTimer !== null) {
+                this.scheduleNextTick();
+            }
+        }, nextDelay);
+    }
+
     stop(): void {
         if (this.tickTimer) {
-            clearInterval(this.tickTimer);
+            clearTimeout(this.tickTimer);
             this.tickTimer = null;
         }
     }
@@ -301,9 +337,10 @@ export class Game {
     private tick(): void {
         const tickStart = Date.now();
         const dt = 1; // fixed timestep (1 tick)
-        // Capture wall-clock time once per tick so every player state in this
-        // tick carries the same serverTime (used by the client interpolation buffer).
-        const tickServerTime = Date.now();
+        // Capture wall-clock time once per tick so every sub-system uses the same
+        // timestamp (avoids redundant Date.now() calls in isSpawnProtected, etc.).
+        this.tickTimestamp = tickStart;
+        const tickServerTime = tickStart;
 
         // Collect kills that happen this tick to broadcast to all clients
         const pendingKills: KillEvent[] = [];
@@ -316,10 +353,11 @@ export class Game {
         // are set in time for this tick's movement calculations.
         this.botManager.update();
 
-        // Rebuild spatial grid
+        // Rebuild spatial grid — only dynamic entities (players) are re-inserted
+        // every tick. Static world objects use a separate grid rebuilt only when dirty.
         this.grid.clear();
 
-        // Insert players
+        // Insert players (dynamic)
         for (const player of this.players.values()) {
             if (!player.alive) continue;
             this.grid.insert({
@@ -330,18 +368,15 @@ export class Game {
             });
         }
 
-        // Insert active world objects
+        // Static world objects — the grid only rebuilds its internal static cells
+        // when markStaticDirty() has been called (i.e., objects destroyed/respawned).
+        // We always pass the current active objects list; setStaticEntities only
+        // triggers a rebuild when the reference changes or markStaticDirty() was called.
         const activeObjects = this.world.getActiveObjects();
-        for (const obj of activeObjects) {
-            this.grid.insert({
-                id: obj.id,
-                x: obj.x,
-                y: obj.y,
-                size: obj.size,
-            });
-        }
+        this.grid.setStaticEntities(activeObjects as any);
 
         // Update each player
+        const now = this.tickTimestamp;
         for (const player of this.players.values()) {
             if (!player.alive) continue;
 
@@ -373,7 +408,7 @@ export class Game {
                 if (pDist < player.radius + POWERUP_COLLECT_RADIUS) {
                     player.applyPowerUp(pu.type);
                     this.world.collectPowerUp(pu);
-                    console.log(`[Game] ${player.name} collected power-up: ${pu.type}`);
+                    logger.debug(`${player.name} collected power-up: ${pu.type}`);
                 }
             }
 
@@ -415,7 +450,9 @@ export class Game {
         }
         const playerArray = this._alivePlayers;
 
-        const safeZoneCache = new Map<string, boolean>();
+        // Reuse class-level safeZoneCache (clear instead of allocating new Map)
+        const safeZoneCache = this.safeZoneCache;
+        safeZoneCache.clear();
         for (const p of playerArray) {
             safeZoneCache.set(p.id, p.radius < SAFE_ZONE_MAX_RADIUS && this.world.isInSafeZone(p.x, p.y));
         }
@@ -429,8 +466,8 @@ export class Game {
                 const touchDist = a.radius + b.radius;
 
                 if (dist < touchDist * 1.5) {
-                    const bSpawnProtected = b.isSpawnProtected();
-                    const aSpawnProtected = a.isSpawnProtected();
+                    const bSpawnProtected = b.isSpawnProtected(now);
+                    const aSpawnProtected = a.isSpawnProtected(now);
 
                     const bSafeZoneProtected = safeZoneCache.get(b.id)!;
                     const aSafeZoneProtected = safeZoneCache.get(a.id)!;
@@ -549,11 +586,20 @@ export class Game {
 
         if (this.tickCount - this.leaderboardTick >= 5) {
             this.leaderboardTick = this.tickCount;
-            this.cachedLeaderboard = Array.from(this.players.values())
-                .filter(p => p.alive)
-                .sort((a, b) => b.score - a.score)
-                .slice(0, 10)
-                .map(p => ({ name: p.name, score: Math.floor(p.score), radius: p.radius }));
+            // Reuse a pre-allocated sort buffer instead of Array.from().filter().sort().slice().map()
+            const sortBuf = this._leaderboardSortBuf;
+            sortBuf.length = 0;
+            for (const p of this.players.values()) {
+                if (p.alive) sortBuf.push(p);
+            }
+            sortBuf.sort((a, b) => b.score - a.score);
+            const top = Math.min(sortBuf.length, 10);
+            const lb: LeaderboardEntry[] = new Array(top);
+            for (let i = 0; i < top; i++) {
+                const p = sortBuf[i];
+                lb[i] = { name: p.name, score: Math.floor(p.score), radius: p.radius };
+            }
+            this.cachedLeaderboard = lb;
         }
         const leaderboard = this.cachedLeaderboard;
 
@@ -568,7 +614,7 @@ export class Game {
         // shield glow whenever a small tornado is standing in a safe haven.
         const allPlayerStates: PlayerState[] = [];
         for (const p of this.players.values()) {
-            const state = p.toState();
+            const state = p.toState(now);
             const inSafeZone = p.alive && (safeZoneCache.get(p.id) ?? (
                 p.radius < SAFE_ZONE_MAX_RADIUS && this.world.isInSafeZone(p.x, p.y)
             ));
@@ -577,6 +623,12 @@ export class Game {
             }
             allPlayerStates.push(state);
         }
+
+        // Cache JSON strings ONCE per tick for leaderboard/powerUps/vehicles.
+        // These are identical for every player, so no need to re-stringify per viewer.
+        this._cachedLeaderboardJson = JSON.stringify(leaderboard);
+        this._cachedPowerUpsJson = JSON.stringify(powerUps);
+        this._cachedVehiclesJson = JSON.stringify(vehicles);
 
         // Send a personalised state to each connected player
         for (const viewer of this.players.values()) {
@@ -660,6 +712,10 @@ export class Game {
     ): PlayerState[] {
         const result: PlayerState[] = [];
 
+        // Use squared distance comparisons to avoid Math.sqrt per player
+        const nearDistSq = NEAR_DISTANCE * NEAR_DISTANCE;
+        const medDistSq  = MED_DISTANCE  * MED_DISTANCE;
+
         for (const state of allStates) {
             // Always include the viewer themselves at full detail
             if (state.id === viewer.id) {
@@ -669,12 +725,12 @@ export class Game {
 
             const dx = state.x - viewer.x;
             const dy = state.y - viewer.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
+            const distSq = dx * dx + dy * dy;
 
-            if (dist < NEAR_DISTANCE) {
+            if (distSq < nearDistSq) {
                 // Near: full detail every tick
                 result.push(state);
-            } else if (dist < MED_DISTANCE) {
+            } else if (distSq < medDistSq) {
                 // Medium: full detail every MED_TICK_INTERVAL ticks
                 if (counter % MED_TICK_INTERVAL === 0) {
                     result.push(state);
@@ -757,6 +813,7 @@ export class Game {
                     activeEffects: cur.activeEffects,
                     protected:     cur.protected,
                     afk:           cur.afk,
+                    lastInputSeq:  cur.lastInputSeq,
                 });
             } else {
                 // Existing player — always send movement, conditionally send slow-changing fields
@@ -765,6 +822,7 @@ export class Game {
                     x:        cur.x,
                     y:        cur.y,
                     rotation: cur.rotation,
+                    lastInputSeq: cur.lastInputSeq,
                 };
                 if (cur.name          !== prev.name)          dp.name          = cur.name;
                 if (cur.radius        !== prev.radius)         dp.radius        = cur.radius;
@@ -795,17 +853,17 @@ export class Game {
             }
         }
 
-        // ---- Leaderboard: only send when changed ----
-        const curLBJson = JSON.stringify(currentLeaderboard);
+        // ---- Leaderboard: only send when changed (use pre-cached JSON) ----
+        const curLBJson = this._cachedLeaderboardJson;
         const prevLBJson = JSON.stringify(prevLB);
         const leaderboardDelta = curLBJson !== prevLBJson ? currentLeaderboard : undefined;
 
-        // ---- PowerUps: only send when changed ----
-        const curPUJson = JSON.stringify(currentPowerUps);
+        // ---- PowerUps: only send when changed (use pre-cached JSON) ----
+        const curPUJson = this._cachedPowerUpsJson;
         const powerUpsDelta = curPUJson !== prevPUJson ? currentPowerUps : undefined;
 
-        // ---- Vehicles: only send when any vehicle state changed ----
-        const curVehJson = JSON.stringify(currentVehicles);
+        // ---- Vehicles: only send when any vehicle state changed (use pre-cached JSON) ----
+        const curVehJson = this._cachedVehiclesJson;
         const vehiclesDelta = curVehJson !== prevVehJson ? currentVehicles : undefined;
 
         const delta: DeltaGameState = {
@@ -833,12 +891,30 @@ export class Game {
         currentVehicles: NpcVehicle[],
         currentDestroyedIds: number[],
     ): void {
-        // Update per-player state map
+        // Update per-player state map — store only delta-relevant fields
+        // instead of cloning the entire PlayerState with { ...p }.
         const prevStates = this.previousPlayerStates.get(viewerId)!;
-        // Snapshot the current state and collect IDs for cleanup
         const currentIds: string[] = [];
         for (const p of currentPlayers) {
-            prevStates.set(p.id, { ...p });
+            const activeEffectsJson = JSON.stringify(p.activeEffects);
+            // Store a lightweight snapshot with only the fields compared in buildDelta()
+            prevStates.set(p.id, {
+                id: p.id,
+                name: p.name,
+                x: p.x,
+                y: p.y,
+                radius: p.radius,
+                rotation: p.rotation,
+                score: p.score,
+                velocityX: p.velocityX,
+                velocityY: p.velocityY,
+                alive: p.alive,
+                stamina: p.stamina,
+                protected: p.protected,
+                afk: p.afk,
+                activeEffects: p.activeEffects,
+                lastInputSeq: p.lastInputSeq,
+            });
             currentIds.push(p.id);
         }
         // Remove players no longer in the filtered list (only if the map grew)
@@ -852,11 +928,11 @@ export class Game {
         // Update leaderboard baseline
         this.previousLeaderboards.set(viewerId, currentLeaderboard);
 
-        // Update power-ups baseline (stored as JSON string for O(1) compare)
-        this.previousPowerUps.set(viewerId, JSON.stringify(currentPowerUps));
+        // Update power-ups baseline — reuse the pre-cached JSON string
+        this.previousPowerUps.set(viewerId, this._cachedPowerUpsJson);
 
-        // Update vehicles baseline (stored as JSON string for O(1) compare)
-        this.previousVehicles.set(viewerId, JSON.stringify(currentVehicles));
+        // Update vehicles baseline — reuse the pre-cached JSON string
+        this.previousVehicles.set(viewerId, this._cachedVehiclesJson);
 
         // Mark only newly-destroyed IDs as acknowledged (avoids iterating the full array)
         const ackedIds = this.acknowledgedDestroyedIds.get(viewerId)!;

@@ -8,7 +8,7 @@
 import { Game } from './Game.js';
 import { Logger } from './Logger.js';
 import { Metrics } from './Metrics.js';
-import type { GameState } from '../shared/types.js';
+import type { GameState, DeltaGameState } from '../shared/types.js';
 import type { Server } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '../shared/types.js';
 
@@ -63,6 +63,10 @@ export class RoomManager {
             (tickMs: number) => {
                 this.metrics.recordTick(tickMs);
                 this.metrics.update(this.getTotalPlayerCount(), this.rooms.size);
+            },
+            // Delta state update — enables delta compression
+            (playerId: string, delta: DeltaGameState) => {
+                this.io.to(playerId).emit('game:delta', delta);
             },
         );
 

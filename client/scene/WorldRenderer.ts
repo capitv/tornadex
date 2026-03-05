@@ -689,8 +689,9 @@ export class WorldRenderer {
                 // Skip vertices too far from this tornado (beyond ~3σ).
                 if (dist2 > tCullR2[t]) continue;
 
-                // Gaussian falloff: pull = depth * e^( -dist² / influence² )
-                totalPull += tDepth[t] * Math.exp(-dist2 * tInvInfl2[t]);
+                // Fast polynomial approximation of Gaussian falloff
+                const u = 1.0 - dist2 * tInvInfl2[t];
+                if (u > 0) totalPull += tDepth[t] * u * u;
             }
 
             // Downward in world space = negative Z in the plane's local frame.
@@ -1389,6 +1390,8 @@ export class WorldRenderer {
     private _tiltQuat = new THREE.Quaternion();
     // Reusable set for tracking affected object IDs — cleared each frame
     private _affectedThisFrame = new Set<number>();
+    private _candidateIds = new Set<number>();
+    private _dirtyInstancedMeshes = new Set<THREE.InstancedMesh>();
 
     public updateSuctionEffect(tornadoPositions: { x: number; z: number; radius: number }[]): void {
         this._suctionFrame++;
@@ -1414,13 +1417,14 @@ export class WorldRenderer {
         // Max suction radius = max tornado radius (~7) * 2.0 = 14 units.
         // CHUNK_SIZE = 200, so we only need to check the tornado's own chunk
         // and its immediate neighbours (3x3 = 9 chunks max per tornado).
-        const candidateIds = new Set<number>();
+        const candidateIds = this._candidateIds;
+        candidateIds.clear();
         for (const t of tornadoPositions) {
             const cx = Math.floor(t.x / CHUNK_SIZE);
             const cz = Math.floor(t.z / CHUNK_SIZE);
             for (let dcx = -1; dcx <= 1; dcx++) {
                 for (let dcz = -1; dcz <= 1; dcz++) {
-                    const key = `${cx + dcx},${cz + dcz}`;
+                    const key = `${cx + dcx}_${cz + dcz}`;
                     const chunk = this.chunks.get(key);
                     if (!chunk) continue;
                     for (const entry of chunk.entries) {
@@ -1526,9 +1530,15 @@ export class WorldRenderer {
                 this.dummy.scale.copy(this._suctionScale);
                 this.dummy.updateMatrix();
                 partIm.setMatrixAt(inst.index, this.dummy.matrix);
-                partIm.instanceMatrix.needsUpdate = true;
+                this._dirtyInstancedMeshes.add(partIm);
             }
         }
+
+        // Batch-set needsUpdate once per dirty InstancedMesh
+        for (const im of this._dirtyInstancedMeshes) {
+            im.instanceMatrix.needsUpdate = true;
+        }
+        this._dirtyInstancedMeshes.clear();
 
         // Restore objects that were affected last frame but are no longer
         for (const [id, strength] of this._suctionStrength) {

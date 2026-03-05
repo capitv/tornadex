@@ -102,9 +102,9 @@ function isValidInput(input: unknown): input is InputPayload {
     if (!input || typeof input !== 'object') return false;
     const p = input as Record<string, unknown>;
 
-    // angle must be a finite number in [0, 2π]
+    // angle must be a finite number in [-π, π] or [0, 2π] (atan2 returns [-π, π])
     if (typeof p.angle !== 'number' || !Number.isFinite(p.angle)) return false;
-    if (p.angle < 0 || p.angle > TWO_PI) return false;
+    if (p.angle < -Math.PI || p.angle > TWO_PI) return false;
 
     // boost must be a boolean
     if (typeof p.boost !== 'boolean') return false;

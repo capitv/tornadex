@@ -25,9 +25,12 @@ void main() {
     vOpacity     = aOpacity;
     vTimeOffset  = aTimeOffset;
 
+    // With InstancedMesh the instance transform is in instanceMatrix.
+    // We extract the world-space centre from column 3 of the instance matrix.
+    vec3 worldCenter = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
+
     // Billboard: expand the quad toward camera right/up
     // position.x and position.y are -0.5..0.5 from PlaneGeometry
-    vec3 worldCenter = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
     vec3 worldPos    = worldCenter
                      + uCameraRight * position.x * aSize
                      + uCameraUp    * position.y * aSize;
@@ -206,43 +209,64 @@ void main() {
 }
 `;
 
-// ---- Lightning bolt geometry helper --------------------------------
-// Builds a jagged line from sky to ground with a few random jogs.
-// Returns a THREE.Line. Call dispose() on geometry + material when done.
-function buildLightningBolt(
+// ---- Lightning bolt geometry pool -----------------------------------
+// Pre-allocated pool of bolt Line objects to avoid per-strike allocation.
+const BOLT_SEGMENTS = 12;
+const BOLT_POOL_SIZE = 3;
+
+/** Update a pooled bolt's geometry with new jagged line positions. */
+function updateBoltGeometry(
+    bolt: THREE.Line,
     x: number,
     z: number,
     topY: number,
     seed: number
-): THREE.Line {
-    const segments = 12;
-    const points: THREE.Vector3[] = [];
+): void {
     const rng = (n: number) => Math.abs(Math.sin(seed * 127.1 + n * 311.7) * 43758.5453) % 1;
-
-    for (let i = 0; i <= segments; i++) {
-        const t = i / segments;
+    const posAttr = bolt.geometry.getAttribute('position') as THREE.BufferAttribute;
+    for (let i = 0; i <= BOLT_SEGMENTS; i++) {
+        const t = i / BOLT_SEGMENTS;
         const y = topY * (1 - t);
-        const jitter = (1 - t) * 2.5; // wilder near top, straighter near ground
+        const jitter = (1 - t) * 2.5;
         const bx = x + (rng(i * 2) - 0.5) * jitter;
         const bz = z + (rng(i * 2 + 1) - 0.5) * jitter;
-        points.push(new THREE.Vector3(bx, y, bz));
+        posAttr.setXYZ(i, bx, y, bz);
     }
+    posAttr.needsUpdate = true;
+    bolt.geometry.computeBoundingSphere();
+}
 
-    const geo = new THREE.BufferGeometry().setFromPoints(points);
-    const mat = new THREE.LineBasicMaterial({
-        color: 0xd0e8ff,
-        transparent: true,
-        opacity: 1.0,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-    });
-    return new THREE.Line(geo, mat);
+/** Create the fixed-size pool of bolt Line objects (hidden initially). */
+function createBoltPool(scene: THREE.Scene): THREE.Line[] {
+    const pool: THREE.Line[] = [];
+    const templatePoints: THREE.Vector3[] = [];
+    for (let i = 0; i <= BOLT_SEGMENTS; i++) {
+        templatePoints.push(new THREE.Vector3(0, -9999, 0));
+    }
+    for (let b = 0; b < BOLT_POOL_SIZE; b++) {
+        const geo = new THREE.BufferGeometry().setFromPoints(templatePoints);
+        const mat = new THREE.LineBasicMaterial({
+            color: 0xd0e8ff,
+            transparent: true,
+            opacity: 1.0,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+        });
+        const line = new THREE.Line(geo, mat);
+        line.visible = false;
+        line.renderOrder = 10;
+        scene.add(line);
+        pool.push(line);
+    }
+    return pool;
 }
 
 // ---- Strike descriptor --------------------------------------------
 interface LightningStrike {
     bolt: THREE.Line;
+    boltIndex: number;       // index into the bolt pool for returning on completion
     light: THREE.PointLight;
+    lightIndex: number;      // index into the light pool for returning on completion
     phase: 'flash1' | 'dark' | 'flash2' | 'done';
     elapsed: number;
     // Phase durations in milliseconds
@@ -253,7 +277,6 @@ interface LightningStrike {
 
 // ---- Cloud billboard descriptor -----------------------------------
 interface CloudBillboard {
-    mesh: THREE.Mesh;
     // Wind drift velocity (world units / second)
     windX: number;
     windZ: number;
@@ -282,6 +305,13 @@ export class SkyboxManager {
     private nextStrikeIn: number = 5000 + Math.random() * 8000; // ms until first strike
     private elapsed: number = 0;
 
+    // Pre-allocated bolt pool (geometry+material+line reused across strikes)
+    private boltPool: THREE.Line[] = [];
+    private boltAvailable: boolean[] = [];  // true = slot is free
+    // Pre-allocated light pool for lightning strikes
+    private lightPool: THREE.PointLight[] = [];
+    private lightAvailable: boolean[] = [];
+
     // How large the biggest tornado in the scene is (drives frequency)
     private maxTornadoRadius: number = 1;
 
@@ -296,9 +326,11 @@ export class SkyboxManager {
     // ---- Cloud billboard system ----
     private clouds: CloudBillboard[] = [];
     private cloudMaterial: THREE.ShaderMaterial | null = null;
-    // Reusable scratch vectors for the billboard update uniforms
+    private cloudInstancedMesh: THREE.InstancedMesh | null = null;
+    // Reusable scratch objects for the billboard update
     private _camRight  = new THREE.Vector3();
     private _camUp     = new THREE.Vector3();
+    private _tmpMatrix = new THREE.Matrix4();
 
     constructor(scene: THREE.Scene) {
         this.scene = scene;
@@ -327,6 +359,19 @@ export class SkyboxManager {
         // Render before everything else (no depth fighting)
         this.skyMesh.renderOrder = -1;
         scene.add(this.skyMesh);
+
+        // Pre-allocate lightning bolt + light pools
+        this.boltPool = createBoltPool(scene);
+        this.boltAvailable = new Array(BOLT_POOL_SIZE).fill(true);
+        this.lightPool = [];
+        this.lightAvailable = [];
+        for (let i = 0; i < BOLT_POOL_SIZE; i++) {
+            const light = new THREE.PointLight(0xaad4ff, 0, 300);
+            light.visible = false;
+            scene.add(light);
+            this.lightPool.push(light);
+            this.lightAvailable.push(true);
+        }
 
         // Spawn the volumetric cloud billboard layer
         this.initClouds();
@@ -409,12 +454,12 @@ export class SkyboxManager {
                     s.phase = 'done';
                 }
             } else {
-                // Cleanup
-                this.scene.remove(s.bolt);
-                this.scene.remove(s.light);
-                (s.bolt.geometry as THREE.BufferGeometry).dispose();
-                (s.bolt.material as THREE.Material).dispose();
-                s.light.dispose();
+                // Return bolt and light to pool (no dispose — reused next strike)
+                s.bolt.visible = false;
+                s.light.visible = false;
+                s.light.intensity = 0;
+                this.boltAvailable[s.boltIndex] = true;
+                this.lightAvailable[s.lightIndex] = true;
                 this.strikes.splice(i, 1);
                 continue;
             }
@@ -445,6 +490,20 @@ export class SkyboxManager {
     }
 
     private triggerStrike(): void {
+        // Find a free bolt slot from the pool
+        let boltIdx = -1;
+        for (let i = 0; i < BOLT_POOL_SIZE; i++) {
+            if (this.boltAvailable[i]) { boltIdx = i; break; }
+        }
+        if (boltIdx === -1) return; // all pool slots in use, skip this strike
+
+        // Find a free light slot from the pool
+        let lightIdx = -1;
+        for (let i = 0; i < BOLT_POOL_SIZE; i++) {
+            if (this.lightAvailable[i]) { lightIdx = i; break; }
+        }
+        if (lightIdx === -1) return;
+
         // Pick a random position in the world (above the cloud ceiling ~45-80 units)
         const spread = this.worldHalfSize * 0.9;
         const bx = this.worldCenter.x + (Math.random() - 0.5) * spread * 2;
@@ -452,18 +511,24 @@ export class SkyboxManager {
         const topY = 45 + Math.random() * 35;
 
         const seed = Math.random() * 1000;
-        const bolt = buildLightningBolt(bx, bz, topY, seed);
-        bolt.renderOrder = 10;
-        this.scene.add(bolt);
+        const bolt = this.boltPool[boltIdx];
+        updateBoltGeometry(bolt, bx, bz, topY, seed);
+        bolt.visible = true;
+        (bolt.material as THREE.LineBasicMaterial).opacity = 1.0;
+        this.boltAvailable[boltIdx] = false;
 
-        // Point light at bolt origin
-        const light = new THREE.PointLight(0xaad4ff, 8, 300);
+        // Reuse pooled light
+        const light = this.lightPool[lightIdx];
         light.position.set(bx, topY * 0.5, bz);
-        this.scene.add(light);
+        light.intensity = 8;
+        light.visible = true;
+        this.lightAvailable[lightIdx] = false;
 
         const strike: LightningStrike = {
             bolt,
+            boltIndex: boltIdx,
             light,
+            lightIndex: lightIdx,
             phase: 'flash1',
             elapsed: 0,
             flash1Duration: 80 + Math.random() * 60,    // 80–140 ms
@@ -481,7 +546,7 @@ export class SkyboxManager {
         const COUNT = 40; // 30-50 range; 40 is a good balance
 
         // Shared ShaderMaterial — all clouds use the same program.
-        // Per-cloud variation is baked into BufferGeometry attributes.
+        // Per-cloud variation is baked into InstancedBufferAttributes.
         this.cloudMaterial = new THREE.ShaderMaterial({
             vertexShader:   cloudVertexShader,
             fragmentShader: cloudFragmentShader,
@@ -498,7 +563,7 @@ export class SkyboxManager {
         });
 
         // Single shared PlaneGeometry (1×1 quad, centred at origin).
-        // The vertex shader scales it using the per-vertex aSize attribute.
+        // The vertex shader scales it using the per-instance aSize attribute.
         const planeGeo = new THREE.PlaneGeometry(1, 1);
 
         // Deterministic seeded RNG so the cloud layout is stable across hot-reloads.
@@ -510,33 +575,20 @@ export class SkyboxManager {
 
         const SPREAD_RADIUS = 650; // half-width of the cloud field around origin
 
+        // Pre-allocate per-instance attribute arrays
+        const sizes       = new Float32Array(COUNT);
+        const opacities   = new Float32Array(COUNT);
+        const timeOffsets = new Float32Array(COUNT);
+
         for (let i = 0; i < COUNT; i++) {
-            // Each billboard gets its own BufferGeometry clone so we can embed
-            // per-instance attributes (aSize, aOpacity, aTimeOffset) without
-            // needing an InstancedMesh.  The geometry is tiny (4 verts) so the
-            // overhead is negligible for 40 meshes.
-            const geo = planeGeo.clone();
-
-            const vertexCount = geo.attributes.position.count; // 4 for PlaneGeometry
-
             // aSize: half-size in world units — billboard spans 2×aSize
-            const cloudSize = 20 + rng() * 40; // 20..60 world units wide
-            const sizeAttr  = new Float32Array(vertexCount).fill(cloudSize);
-            geo.setAttribute('aSize', new THREE.BufferAttribute(sizeAttr, 1));
+            sizes[i] = 20 + rng() * 40; // 20..60 world units wide
 
             // aOpacity: 0.1..0.3 — clouds are subtle, not solid
-            const opacity     = 0.10 + rng() * 0.20;
-            const opacityAttr = new Float32Array(vertexCount).fill(opacity);
-            geo.setAttribute('aOpacity', new THREE.BufferAttribute(opacityAttr, 1));
+            opacities[i] = 0.10 + rng() * 0.20;
 
             // aTimeOffset: randomises each cloud's FBM wobble phase
-            const timeOff    = rng() * 100.0;
-            const timeAttr   = new Float32Array(vertexCount).fill(timeOff);
-            geo.setAttribute('aTimeOffset', new THREE.BufferAttribute(timeAttr, 1));
-
-            const mesh = new THREE.Mesh(geo, this.cloudMaterial);
-            mesh.renderOrder = 1; // draw on top of the skybox sphere (renderOrder -1)
-            mesh.frustumCulled = false; // billboards can be outside normal frustum planes
+            timeOffsets[i] = rng() * 100.0;
 
             // Random world-space position:
             //   X, Z — scattered in a disc of radius SPREAD_RADIUS around origin
@@ -547,30 +599,47 @@ export class SkyboxManager {
             const wy    = 45 + rng() * 10;  // Y=45..55
             const wz    = Math.sin(angle) * r;
 
-            mesh.position.set(wx, wy, wz);
-            this.scene.add(mesh);
-
             // Per-cloud wind: mostly blowing in +X with a gentle Z component.
             // Heights nearer Y=55 drift slightly faster for a subtle parallax feel.
             const heightFrac = (wy - 45) / 10; // 0..1
             const windX = 2.0 + rng() * 3.0 + heightFrac * 1.5; // 2..6.5 units/s
             const windZ = (rng() - 0.5) * 1.5;                   // ±0.75 units/s
 
-            this.clouds.push({ mesh, windX, windZ, wx, wy, wz });
+            this.clouds.push({ windX, windZ, wx, wy, wz });
         }
 
-        planeGeo.dispose(); // original template no longer needed
+        // Attach per-instance attributes to the shared geometry
+        planeGeo.setAttribute('aSize',       new THREE.InstancedBufferAttribute(sizes, 1));
+        planeGeo.setAttribute('aOpacity',    new THREE.InstancedBufferAttribute(opacities, 1));
+        planeGeo.setAttribute('aTimeOffset', new THREE.InstancedBufferAttribute(timeOffsets, 1));
+
+        // Create a single InstancedMesh for all clouds
+        const iMesh = new THREE.InstancedMesh(planeGeo, this.cloudMaterial, COUNT);
+        iMesh.renderOrder = 1;       // draw on top of the skybox sphere (renderOrder -1)
+        iMesh.frustumCulled = false;  // billboards can be outside normal frustum planes
+
+        // Initialise every instance matrix to the cloud's world position (identity rotation, unit scale).
+        const mat4 = this._tmpMatrix;
+        for (let i = 0; i < COUNT; i++) {
+            const c = this.clouds[i];
+            mat4.makeTranslation(c.wx, c.wy, c.wz);
+            iMesh.setMatrixAt(i, mat4);
+        }
+        iMesh.instanceMatrix.needsUpdate = true;
+
+        this.cloudInstancedMesh = iMesh;
+        this.scene.add(iMesh);
     }
 
     // ================================================================
     // Cloud billboard update — called from update() each frame
     // ================================================================
     updateClouds(cameraX: number, cameraZ: number, dtSec: number, camera: THREE.Camera): void {
-        if (!this.cloudMaterial) return;
+        if (!this.cloudMaterial || !this.cloudInstancedMesh) return;
 
         // Extract camera right/up vectors for the billboard vertex shader.
         // These are the first and second columns of the view matrix inverse (= camera matrix).
-        camera.updateMatrixWorld(false);
+        // Note: camera.matrixWorld is already updated by the main render loop, no need to call updateMatrixWorld here.
         this._camRight.setFromMatrixColumn(camera.matrixWorld, 0); // column 0 = right
         this._camUp.setFromMatrixColumn(camera.matrixWorld, 1);    // column 1 = up
 
@@ -581,8 +650,11 @@ export class SkyboxManager {
         // Wrap distance: clouds that drift more than this many units from the
         // camera in X or Z are teleported to the opposite side.
         const WRAP = 700;
+        const mat4 = this._tmpMatrix;
 
-        for (const c of this.clouds) {
+        for (let i = 0; i < this.clouds.length; i++) {
+            const c = this.clouds[i];
+
             // Drift in wind direction
             c.wx += c.windX * dtSec;
             c.wz += c.windZ * dtSec;
@@ -596,27 +668,43 @@ export class SkyboxManager {
             if (dz >  WRAP) c.wz -= WRAP * 2;
             if (dz < -WRAP) c.wz += WRAP * 2;
 
-            c.mesh.position.set(c.wx, c.wy, c.wz);
+            // Update instance matrix (translation only — billboard rotation is handled in the shader)
+            mat4.makeTranslation(c.wx, c.wy, c.wz);
+            this.cloudInstancedMesh.setMatrixAt(i, mat4);
         }
+
+        this.cloudInstancedMesh.instanceMatrix.needsUpdate = true;
     }
 
     dispose(): void {
         this.skyMesh.geometry.dispose();
         this.skyMat.dispose();
         this.scene.remove(this.skyMesh);
-        for (const s of this.strikes) {
-            this.scene.remove(s.bolt);
-            this.scene.remove(s.light);
-            (s.bolt.geometry as THREE.BufferGeometry).dispose();
-            (s.bolt.material as THREE.Material).dispose();
-            s.light.dispose();
-        }
         this.strikes = [];
 
-        // Dispose cloud billboards
-        for (const c of this.clouds) {
-            this.scene.remove(c.mesh);
-            c.mesh.geometry.dispose();
+        // Dispose pooled bolt geometries and materials
+        for (const bolt of this.boltPool) {
+            this.scene.remove(bolt);
+            bolt.geometry.dispose();
+            (bolt.material as THREE.Material).dispose();
+        }
+        this.boltPool = [];
+        this.boltAvailable = [];
+
+        // Dispose pooled lights
+        for (const light of this.lightPool) {
+            this.scene.remove(light);
+            light.dispose();
+        }
+        this.lightPool = [];
+        this.lightAvailable = [];
+
+        // Dispose cloud instanced mesh
+        if (this.cloudInstancedMesh) {
+            this.scene.remove(this.cloudInstancedMesh);
+            this.cloudInstancedMesh.geometry.dispose();
+            this.cloudInstancedMesh.dispose();
+            this.cloudInstancedMesh = null;
         }
         this.clouds = [];
         if (this.cloudMaterial) {

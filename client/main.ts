@@ -50,6 +50,53 @@ const interpolation = new Interpolation();
 const input = new InputHandler(canvas);
 const hudManager = new HUD();
 
+// ============================================================
+// Debug Overlay — toggled with F3 key
+// Shows: FPS, ping, bandwidth, pending inputs, prediction error,
+//        interpolation state, player count, and more.
+// ============================================================
+const debugOverlay = document.createElement('div');
+debugOverlay.id = 'debug-overlay';
+debugOverlay.style.cssText = `
+    position: fixed; top: 8px; left: 8px; z-index: 9999;
+    background: rgba(0,0,0,0.75); color: #0f0; font: 11px monospace;
+    padding: 8px 10px; border-radius: 4px; pointer-events: none;
+    line-height: 1.5; white-space: pre; display: none; min-width: 280px;
+`;
+document.body.appendChild(debugOverlay);
+
+let debugVisible = false;
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'F3') {
+        e.preventDefault();
+        debugVisible = !debugVisible;
+        debugOverlay.style.display = debugVisible ? 'block' : 'none';
+    }
+});
+
+// Debug metrics accumulated per frame
+const debugMetrics = {
+    fps: 0,
+    frameTimes: new Float32Array(60),
+    frameTimeIdx: 0,
+    frameTimeFilled: 0,
+    lastStateTime: 0,
+    stateRate: 0,
+    stateCount: 0,
+    stateWindowStart: 0,
+    predictionError: 0,
+    pendingInputCount: 0,
+    interpPlayerCount: 0,
+    displayX: 0,
+    displayY: 0,
+    serverX: 0,
+    serverY: 0,
+    isDelta: false,
+    deltaCount: 0,
+    fullCount: 0,
+    lastPacketType: 'none' as string,
+};
+
 // ---- Tornado Meshes (for all players) ----
 const tornadoMeshes: Map<string, TornadoMesh> = new Map();
 
@@ -128,6 +175,7 @@ const tornadoOverWater: Set<string> = new Set();
 const _activeMeshIds = new Set<string>();
 const _tornadoDeformPositions: { x: number; z: number; radius: number }[] = [];
 const _minimapPlayers: import('../shared/types.js').PlayerState[] = [];
+const _newlyDestroyed: number[] = [];
 
 /**
  * Returns true when world-space point (x, y) lies inside any water zone.
@@ -168,6 +216,10 @@ interface BufferedInput {
 
 /** Inputs sent but not yet acknowledged by the server (lastInputSeq from PlayerState). */
 const pendingInputs: BufferedInput[] = [];
+
+/** The last input sent to the server — used in the render loop for extrapolation
+ *  consistency so displayPos advances using the same input the server will process. */
+let lastSentInput: { angle: number; active: boolean; boost: boolean } = { angle: 0, active: false, boost: false };
 
 // ---- Client-side prediction state ----
 // Locally predicted position applied on input so the player's tornado responds
@@ -332,6 +384,11 @@ function startGame(): void {
             const stamped = { ...raw, seq: inputSeq };
             network.sendInput(stamped);
 
+            // Cache the sent input so the render loop uses the same values
+            lastSentInput.angle  = raw.angle;
+            lastSentInput.active = raw.active;
+            lastSentInput.boost  = raw.boost;
+
             // Buffer the input for reconciliation replay
             pendingInputs.push({
                 seq:    inputSeq,
@@ -402,13 +459,21 @@ network.onJoined((data) => {
 });
 
 network.onState((state: GameState) => {
+    // Debug: track packet type
+    debugMetrics.lastPacketType = (state as any)._isDelta ? 'delta' : 'full';
+    if ((state as any)._isDelta) debugMetrics.deltaCount++; else debugMetrics.fullCount++;
+
     // Feed the new snapshot into the interpolation ring buffer together with
     // the server's wall-clock time so timestamp-based interpolation works.
     interpolation.updateState(state.players, state.serverTime);
 
     // ---- Input prediction reconciliation ----
     // Drop all inputs that the server has already acknowledged.
-    const localState = state.players.find(p => p.id === network.id);
+    // Fast lookup — avoid .find() linear scan on every tick
+    let localState: import('../shared/types.js').PlayerState | undefined;
+    for (let i = 0; i < state.players.length; i++) {
+        if (state.players[i].id === network.id) { localState = state.players[i]; break; }
+    }
     if (localState) {
         const ackedSeq = localState.lastInputSeq;
         // Remove inputs with seq <= ackedSeq from the pending buffer
@@ -417,7 +482,14 @@ network.onState((state: GameState) => {
             if (pendingInputs[i].seq <= ackedSeq) removeCount = i + 1;
             else break;
         }
-        if (removeCount > 0) pendingInputs.splice(0, removeCount);
+        if (removeCount > 0) {
+            // Shift remaining inputs down instead of splice (avoids internal array realloc)
+            const remaining = pendingInputs.length - removeCount;
+            for (let i = 0; i < remaining; i++) {
+                pendingInputs[i] = pendingInputs[i + removeCount];
+            }
+            pendingInputs.length = remaining;
+        }
 
         // Replay unacknowledged inputs on top of the server-confirmed position
         // to re-derive where the client should be right now.
@@ -467,11 +539,11 @@ network.onState((state: GameState) => {
     // Update world objects and detect destructions.
     // Only process IDs that are new since the last tick (avoid re-creating a Set
     // from the entire destroyedObjectIds array every tick — that was O(n) per frame).
-    const newlyDestroyed: number[] = [];
+    _newlyDestroyed.length = 0;
     for (const id of state.destroyedObjectIds) {
         if (!previousObjectIds.has(id)) {
             previousObjectIds.add(id);
-            newlyDestroyed.push(id);
+            _newlyDestroyed.push(id);
 
             // Object was JUST destroyed — trigger particles + breaking fragments
             const pos = worldRenderer.getObjectPosition(id);
@@ -487,8 +559,18 @@ network.onState((state: GameState) => {
         }
     }
 
-    if (newlyDestroyed.length > 0) {
-        worldRenderer.hideNewlyDestroyedObjects(newlyDestroyed);
+    if (_newlyDestroyed.length > 0) {
+        worldRenderer.hideNewlyDestroyedObjects(_newlyDestroyed);
+    }
+
+    // Prevent previousObjectIds from growing without bound.
+    // When our set is much larger than the server's list, rebuild from server data.
+    // Use a larger threshold (500) so this runs rarely, and rebuild in-place.
+    if (previousObjectIds.size > state.destroyedObjectIds.length + 500) {
+        previousObjectIds.clear();
+        for (const id of state.destroyedObjectIds) {
+            previousObjectIds.add(id);
+        }
     }
 
     // Update power-up orbs in the 3D scene
@@ -565,12 +647,14 @@ network.onReconnect(() => {
 
 // ---- Render Loop ----
 let lastTime = performance.now();
+let frameCount = 0;
 
 function animate(time: number): void {
     requestAnimationFrame(animate);
 
     const dt = Math.min(time - lastTime, 100); // cap delta
     lastTime = time;
+    frameCount++;
 
     // Always update the skybox — clouds + lightning animate even on the menu screen
     sceneManager.update(dt);
@@ -610,28 +694,29 @@ function animate(time: number): void {
     // predictedLocal is ONLY set by onState reconciliation — never mutated here.
     // A gentle correction pull keeps displayPos in sync with the server.
     if (displayPos && predictedLocal && dt > 0) {
-        // 1. Advance displayPos by current input for immediate responsiveness
-        if (currentInput.active) {
-            const boostMult = currentInput.boost ? BOOST_MULTIPLIER : 1.0;
+        // 1. Advance displayPos using the LAST SENT input for consistency
+        //    with what the server will process (prevents extrapolation divergence).
+        if (lastSentInput.active) {
+            const boostMult = lastSentInput.boost ? BOOST_MULTIPLIER : 1.0;
             const rawSpeed = BASE_SPEED_PER_MS * (1 - localPlayerRadius * SPEED_SIZE_FACTOR) * boostMult;
             const minSpeed = BASE_SPEED_PER_MS * 0.3 * boostMult;
             const speed = Math.max(rawSpeed, minSpeed);
-            displayPos.x += Math.cos(currentInput.angle) * speed * dt;
-            displayPos.y += Math.sin(currentInput.angle) * speed * dt;
+            displayPos.x += Math.cos(lastSentInput.angle) * speed * dt;
+            displayPos.y += Math.sin(lastSentInput.angle) * speed * dt;
         }
 
         // 2. Smooth correction toward reconciled prediction
-        // At 60fps (dt≈16.7ms), corrFactor ≈ 0.39 → ~77% corrected per tick (50ms).
-        // This is strong enough to prevent drift but gentle enough to avoid jarring snaps.
+        // At 60fps (dt≈16.7ms), corrFactor ≈ 0.18 → ~45% corrected per tick (50ms).
+        // Gentle enough to avoid oscillation while still converging within ~150ms.
         const errX = predictedLocal.x - displayPos.x;
         const errY = predictedLocal.y - displayPos.y;
         const errDist = errX * errX + errY * errY;
-        if (errDist > 25) {
-            // Very large error (>5 units): snap immediately
+        if (errDist > 100) {
+            // Very large error (>10 units): snap immediately
             displayPos.x = predictedLocal.x;
             displayPos.y = predictedLocal.y;
         } else if (errDist > 0.0001) {
-            const corrFactor = 1 - Math.exp(-dt * 0.03);
+            const corrFactor = 1 - Math.exp(-dt * 0.012);
             displayPos.x += errX * corrFactor;
             displayPos.y += errY * corrFactor;
         }
@@ -754,28 +839,30 @@ function animate(time: number): void {
     // WorldRenderer to depress the cloud ceiling above each one.
     // state.y from the server maps to Three.js Z (the game uses a top-down
     // 2-D coordinate system where server Y == world Z).
-    _tornadoDeformPositions.length = 0;
+    let _deformCount = 0;
     for (const [, state] of players) {
         if (!state.alive) continue;
-        const entry = _tornadoDeformPositions[_tornadoDeformPositions.length];
-        if (entry) {
-            entry.x = state.x;
-            entry.z = state.y;
-            entry.radius = state.radius;
-            _tornadoDeformPositions.length++;
+        if (_deformCount < _tornadoDeformPositions.length) {
+            _tornadoDeformPositions[_deformCount].x = state.x;
+            _tornadoDeformPositions[_deformCount].z = state.y;
+            _tornadoDeformPositions[_deformCount].radius = state.radius;
         } else {
             _tornadoDeformPositions.push({ x: state.x, z: state.y, radius: state.radius });
         }
+        _deformCount++;
     }
+    _tornadoDeformPositions.length = _deformCount;
     worldRenderer.updateCloudDeformation(_tornadoDeformPositions);
     worldRenderer.updateSuctionEffect(_tornadoDeformPositions);
 
     // Update minimap using the full interpolated player list (not the throttled server list)
     // This prevents distant players from flickering on/off the minimap.
-    // Reuse a scratch array to avoid per-frame allocation
-    _minimapPlayers.length = 0;
-    for (const p of players.values()) _minimapPlayers.push(p);
-    hudManager.updateMinimap(_minimapPlayers, network.id);
+    // Throttled to every 5 frames to reduce overhead (~12 Hz at 60fps is plenty for minimap).
+    if (frameCount % 5 === 0) {
+        _minimapPlayers.length = 0;
+        for (const p of players.values()) _minimapPlayers.push(p);
+        hudManager.updateMinimap(_minimapPlayers, network.id);
+    }
 
     // Remove meshes for disconnected/dead players
     for (const [id, mesh] of tornadoMeshes) {
@@ -805,6 +892,63 @@ function animate(time: number): void {
     // Update particles and fragment animations
     particleSystem.update(dt);
     fragmentSystem.update(dt);
+
+    // ---- Debug overlay update (throttled to every 10 frames) ----
+    if (debugVisible && frameCount % 10 === 0) {
+        // FPS calculation
+        debugMetrics.frameTimes[debugMetrics.frameTimeIdx] = dt;
+        debugMetrics.frameTimeIdx = (debugMetrics.frameTimeIdx + 1) % 60;
+        if (debugMetrics.frameTimeFilled < 60) debugMetrics.frameTimeFilled++;
+        let _dtSum = 0;
+        for (let i = 0; i < debugMetrics.frameTimeFilled; i++) _dtSum += debugMetrics.frameTimes[i];
+        const avgDt = _dtSum / debugMetrics.frameTimeFilled;
+        debugMetrics.fps = avgDt > 0 ? Math.round(1000 / avgDt) : 0;
+
+        // Prediction error
+        if (displayPos && predictedLocal) {
+            const ex = displayPos.x - predictedLocal.x;
+            const ey = displayPos.y - predictedLocal.y;
+            debugMetrics.predictionError = Math.sqrt(ex * ex + ey * ey);
+        }
+        debugMetrics.pendingInputCount = pendingInputs.length;
+        debugMetrics.interpPlayerCount = players.size;
+        if (displayPos) {
+            debugMetrics.displayX = displayPos.x;
+            debugMetrics.displayY = displayPos.y;
+        }
+        const localS = players.get(network.id);
+        if (localS) {
+            debugMetrics.serverX = localS.x;
+            debugMetrics.serverY = localS.y;
+        }
+
+        const ping = network.getPing();
+        const bps = network.getBytesPerSec();
+        const pps = network.getPacketsPerSec();
+        const drawCalls = sceneManager.renderer.info.render.calls;
+        const triangles = sceneManager.renderer.info.render.triangles;
+        const textures = sceneManager.renderer.info.memory.textures;
+        const geometries = sceneManager.renderer.info.memory.geometries;
+
+        debugOverlay.textContent =
+            `=== DEBUG (F3) ===\n` +
+            `FPS:        ${debugMetrics.fps} (${avgDt.toFixed(1)}ms)\n` +
+            `Ping:       ${ping}ms\n` +
+            `Bandwidth:  ${(bps / 1024).toFixed(1)} KB/s (${pps} pkt/s)\n` +
+            `Packets:    full=${debugMetrics.fullCount} delta=${debugMetrics.deltaCount}\n` +
+            `Last pkt:   ${debugMetrics.lastPacketType}\n` +
+            `---\n` +
+            `Pending:    ${debugMetrics.pendingInputCount} inputs\n` +
+            `Pred Error: ${debugMetrics.predictionError.toFixed(2)} units\n` +
+            `Display:    (${debugMetrics.displayX.toFixed(1)}, ${debugMetrics.displayY.toFixed(1)})\n` +
+            `Server:     (${debugMetrics.serverX.toFixed(1)}, ${debugMetrics.serverY.toFixed(1)})\n` +
+            `Players:    ${debugMetrics.interpPlayerCount}\n` +
+            `---\n` +
+            `Draw calls: ${drawCalls}\n` +
+            `Triangles:  ${triangles}\n` +
+            `Textures:   ${textures}\n` +
+            `Geometries: ${geometries}`;
+    }
 
     // Render
     sceneManager.render();

@@ -3,10 +3,10 @@
 // ============================================
 //
 // Design overview:
-//   - Each player keeps a ring buffer of 3 snapshots.  When a new server
+//   - Each player keeps a ring buffer of 5 snapshots.  When a new server
 //     state arrives the oldest slot is overwritten (no allocation).
 //   - The render time is: renderTime = Date.now() - INTERP_DELAY_MS
-//     This places the client 100 ms behind the server so it always has
+//     This places the client 70 ms behind the server so it always has
 //     at least two bracketing snapshots to interpolate between.
 //   - The interpolation factor t is calculated as:
 //       t = (renderTime - snap[a].time) / (snap[b].time - snap[a].time)
@@ -17,10 +17,10 @@
 import type { PlayerState } from '../../shared/types.js';
 
 /** How many milliseconds behind the server the client renders. */
-export const INTERP_DELAY_MS = 100;
+export const INTERP_DELAY_MS = 70;
 
 /** Number of snapshot slots in the per-player ring buffer. */
-const SNAPSHOT_COUNT = 3;
+const SNAPSHOT_COUNT = 5;
 
 interface Snapshot {
     state: PlayerState;
@@ -31,10 +31,10 @@ interface Snapshot {
 /** Per-player interpolation data using a fixed-size ring buffer. */
 interface InterpolatedPlayer {
     /** Pre-allocated snapshot ring buffer. */
-    snapshots: [Snapshot, Snapshot, Snapshot];
+    snapshots: Snapshot[];
     /** Index into snapshots[] of the OLDEST slot (next to be overwritten). */
     oldestIdx: number;
-    /** How many snapshots have been filled (0-3). Reaches 3 and stays there. */
+    /** How many snapshots have been filled (0-5). Reaches SNAPSHOT_COUNT and stays there. */
     filledCount: number;
     /** Ticks since this player was last included in a server update.
      *  Used to tolerate network-throttled gaps without removing the player. */
@@ -118,15 +118,16 @@ export class Interpolation {
             } else {
                 // New player — pre-allocate all slots and fill them with the
                 // initial state so interpolation starts with valid data.
-                const snap0 = makeSnapshot();
-                const snap1 = makeSnapshot();
-                const snap2 = makeSnapshot();
-                copyPlayerState(snap0.state, p); snap0.time = serverTime;
-                copyPlayerState(snap1.state, p); snap1.time = serverTime;
-                copyPlayerState(snap2.state, p); snap2.time = serverTime;
+                const snaps: Snapshot[] = [];
+                for (let i = 0; i < SNAPSHOT_COUNT; i++) {
+                    const s = makeSnapshot();
+                    copyPlayerState(s.state, p);
+                    s.time = serverTime;
+                    snaps.push(s);
+                }
 
                 const entry: InterpolatedPlayer = {
-                    snapshots:          [snap0, snap1, snap2],
+                    snapshots:          snaps,
                     oldestIdx:          1, // slot 0 is the "latest", 1 is next to overwrite
                     filledCount:        SNAPSHOT_COUNT,
                     ticksSinceLastSeen: 0,
@@ -190,44 +191,48 @@ export class Interpolation {
             }
 
             // Find the two snapshots that bracket renderTime.
-            // The ring buffer holds up to 3 entries; we need the newest pair
-            // where snap[a].time <= renderTime <= snap[b].time.
-            //
-            // Order the slots from oldest to newest:
-            //   oldestIdx   → the slot about to be overwritten next
-            //   oldestIdx+1 → middle
-            //   oldestIdx+2 → newest  (= (oldestIdx + SNAPSHOT_COUNT - 1) % SNAPSHOT_COUNT)
-            const i0 = data.oldestIdx % SNAPSHOT_COUNT;
-            const i1 = (data.oldestIdx + 1) % SNAPSHOT_COUNT;
-            const i2 = (data.oldestIdx + 2) % SNAPSHOT_COUNT;
-            const s0 = data.snapshots[i0]; // oldest
-            const s1 = data.snapshots[i1]; // middle
-            const s2 = data.snapshots[i2]; // newest
+            // The ring buffer holds up to SNAPSHOT_COUNT entries ordered
+            // oldest to newest starting at oldestIdx.
+            // We walk from oldest to newest to find the pair where
+            // snap[a].time <= renderTime <= snap[b].time.
+            const filled = Math.min(data.filledCount, SNAPSHOT_COUNT);
 
-            let snapA: Snapshot;
-            let snapB: Snapshot;
+            // Build ordered indices from oldest to newest
+            let snapA: Snapshot = data.snapshots[data.oldestIdx % SNAPSHOT_COUNT];
+            let snapB: Snapshot = snapA;
+            let foundPair = false;
 
-            if (renderTime >= s1.time) {
-                // renderTime is between middle and newest (normal case)
-                snapA = s1;
-                snapB = s2;
-            } else if (renderTime >= s0.time) {
-                // renderTime is between oldest and middle (extra buffering)
-                snapA = s0;
-                snapB = s1;
-            } else {
-                // renderTime is before all snapshots — extrapolate using oldest pair
-                snapA = s0;
-                snapB = s1;
+            for (let k = 0; k < filled - 1; k++) {
+                const idxA = (data.oldestIdx + k) % SNAPSHOT_COUNT;
+                const idxB = (data.oldestIdx + k + 1) % SNAPSHOT_COUNT;
+                const sA = data.snapshots[idxA];
+                const sB = data.snapshots[idxB];
+                if (renderTime <= sB.time) {
+                    snapA = sA;
+                    snapB = sB;
+                    foundPair = true;
+                    break;
+                }
+                // Keep tracking the latest pair in case renderTime is beyond all snapshots
+                snapA = sA;
+                snapB = sB;
             }
 
-            const dt = snapB.time - snapA.time;
+            if (!foundPair) {
+                // renderTime is beyond the newest snapshot — use the two most recent
+                const newestIdx = (data.oldestIdx + filled - 1) % SNAPSHOT_COUNT;
+                const prevIdx   = (data.oldestIdx + filled - 2) % SNAPSHOT_COUNT;
+                snapA = data.snapshots[prevIdx];
+                snapB = data.snapshots[newestIdx];
+            }
+
+            const snapDt = snapB.time - snapA.time;
             let t: number;
-            if (dt <= 0) {
+            if (snapDt <= 0) {
                 t = 1; // identical timestamps — show the newer state
             } else {
-                t = (renderTime - snapA.time) / dt;
-                // Clamp to [0, 1]
+                t = (renderTime - snapA.time) / snapDt;
+                // Clamp to [0, 1] for normal interpolation
                 if (t < 0) t = 0;
                 if (t > 1) t = 1;
             }
@@ -237,10 +242,27 @@ export class Interpolation {
             out.y      = lerp(snapA.state.y,       snapB.state.y,      t);
             out.radius = lerp(snapA.state.radius,  snapB.state.radius, t);
 
+            // Interpolate rotation (continuous spin value — simple lerp works)
+            out.rotation = snapA.state.rotation + (snapB.state.rotation - snapA.state.rotation) * t;
+
+            // Velocity-based extrapolation for remote players when data runs out
+            // (t reached 1.0 meaning renderTime is at or past the newest snapshot).
+            // Cap extrapolation to 100ms to prevent wild predictions.
+            if (t >= 1.0 && snapDt > 0) {
+                const overshootMs = renderTime - snapB.time;
+                const extraMs = Math.min(overshootMs, 100); // cap at 100ms
+                if (extraMs > 0) {
+                    // velocityX/Y are in units/tick (50ms), convert to units/ms
+                    const vxPerMs = snapB.state.velocityX / 50;
+                    const vyPerMs = snapB.state.velocityY / 50;
+                    out.x += vxPerMs * extraMs;
+                    out.y += vyPerMs * extraMs;
+                }
+            }
+
             // Non-interpolated fields: take from the newer snapshot
             out.id            = snapB.state.id;
             out.name          = snapB.state.name;
-            out.rotation      = snapB.state.rotation;
             out.score         = snapB.state.score;
             out.velocityX     = snapB.state.velocityX;
             out.velocityY     = snapB.state.velocityY;

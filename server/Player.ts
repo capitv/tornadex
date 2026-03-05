@@ -54,8 +54,8 @@ export class Player {
     }
 
     /** Returns true when spawn invulnerability is still active. */
-    isSpawnProtected(): boolean {
-        return Date.now() < this.spawnProtectedUntil;
+    isSpawnProtected(now?: number): boolean {
+        return (now ?? Date.now()) < this.spawnProtectedUntil;
     }
 
     setInput(input: InputPayload): void {
@@ -204,7 +204,7 @@ export class Player {
         this.spawnProtectedUntil = Date.now() + SPAWN_PROTECTION_MS;
     }
 
-    toState(): PlayerState {
+    toState(now?: number): PlayerState {
         // Convert the internal Map into a flat array for the network payload.
         // Each entry carries the effect type and how many ticks (≈ seconds × TICK_RATE)
         // remain so the client can display accurate countdown timers.
@@ -230,7 +230,7 @@ export class Player {
             activeEffects,
             // Protected when spawn invulnerability is active OR the shield power-up is active.
             // The safe-zone check is done in Game.ts; the client only needs the boolean.
-            protected: this.isSpawnProtected() || this.hasEffect('shield'),
+            protected: this.isSpawnProtected(now) || this.hasEffect('shield'),
             // AFK flag — true once idle ticks exceed 60 (~3 seconds); resets on any input.
             afk: this.idleTicks > 60,
             // Echo back the last processed input sequence for client-side reconciliation.

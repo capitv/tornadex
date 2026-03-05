@@ -290,7 +290,7 @@ export class InputHandler {
             };
         }
 
-        // Desktop: derive angle from cursor position relative to canvas center
+        // Desktop: derive angle from cursor position relative to canvas center.
         const centerX = window.innerWidth / 2;
         const centerY = window.innerHeight / 2;
 

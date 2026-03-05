@@ -5,8 +5,12 @@
 import { Player } from './Player.js';
 import { Game } from './Game.js';
 import { World } from './World.js';
+import { SpatialGrid, SpatialEntity } from './SpatialGrid.js';
 import { InputPayload } from '../shared/types.js';
 import { WORLD_SIZE, TICK_RATE } from './constants.js';
+import { Logger } from './Logger.js';
+
+const botLogger = new Logger('BotManager');
 
 // ---- Tuning constants ----
 const MIN_BOTS_WITH_ONE_REAL_PLAYER = 2;
@@ -98,6 +102,7 @@ interface BotState {
 export class BotManager {
     private game: Game;
     private world: World;
+    private grid: SpatialGrid | null = null;
     private bots: Map<string, BotState> = new Map();
     private botCounter: number = 0;
     private usedNames: Set<string> = new Set();
@@ -105,6 +110,11 @@ export class BotManager {
     constructor(game: Game, world: World) {
         this.game = game;
         this.world = world;
+    }
+
+    /** Set the spatial grid reference so bots can use it for efficient lookups. */
+    setGrid(grid: SpatialGrid): void {
+        this.grid = grid;
     }
 
     // ------------------------------------------------------------------ //
@@ -228,13 +238,13 @@ export class BotManager {
         };
 
         this.bots.set(id, state);
-        console.log(`[BotManager] Spawned bot: ${name} (${id}), personality: ${JSON.stringify(personality)}`);
+        botLogger.debug(`Spawned bot: ${name} (${id}), personality: ${JSON.stringify(personality)}`);
     }
 
     private removeBot(id: string): void {
         const state = this.bots.get(id);
         if (!state) return;
-        console.log(`[BotManager] Removing bot: ${state.player.name} (${id})`);
+        botLogger.debug(`Removing bot: ${state.player.name} (${id})`);
         this.game.removePlayer(id);
         this.bots.delete(id);
     }
@@ -461,22 +471,47 @@ export class BotManager {
 
     /**
      * Find the nearest non-destroyed world object within range that the bot can destroy.
+     * Uses the spatial grid when available for O(1)-ish lookup instead of scanning all 5600+ objects.
      */
     private findNearestDestroyableObject(
         x: number,
         y: number,
         range: number,
     ): { x: number; y: number } | null {
+        // Use spatial grid for efficient lookup when available
+        if (this.grid) {
+            const nearby = this.grid.query(x, y, range);
+            let closest: { x: number; y: number } | null = null;
+            let closestDistSq = range * range;
+
+            for (const entity of nearby) {
+                // World objects have numeric IDs
+                if (typeof entity.id !== 'number') continue;
+                const obj = this.world.objectsById.get(entity.id as number);
+                if (!obj || obj.destroyed) continue;
+                const dx = obj.x - x;
+                const dy = obj.y - y;
+                const distSq = dx * dx + dy * dy;
+                if (distSq < closestDistSq) {
+                    closestDistSq = distSq;
+                    closest = { x: obj.x, y: obj.y };
+                }
+            }
+
+            return closest;
+        }
+
+        // Fallback: brute-force scan
         let closest: { x: number; y: number } | null = null;
-        let closestDist = range;
+        let closestDistSq = range * range;
 
         for (const obj of this.world.objects) {
             if (obj.destroyed) continue;
             const dx = obj.x - x;
             const dy = obj.y - y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < closestDist) {
-                closestDist = dist;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < closestDistSq) {
+                closestDistSq = distSq;
                 closest = { x: obj.x, y: obj.y };
             }
         }

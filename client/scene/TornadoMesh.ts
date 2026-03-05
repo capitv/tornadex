@@ -117,7 +117,9 @@ export class TornadoMesh {
     // ---- Boost / Trail state ----
     private isBoosting: boolean = false;
 
-    // Trail particles stored in world space (X, Z); Y is animated separately
+    // Trail particle type
+    private static readonly _trailParticleTemplate = { wx: 0, wz: 0, vx: 0, vz: 0, life: 0, size: 0, height: 0 };
+    // Pre-allocated trail particle pool (swap-and-pop, no allocation at runtime)
     private trailParticles: Array<{
         wx: number;   // world-space X at spawn
         wz: number;   // world-space Z at spawn
@@ -126,7 +128,8 @@ export class TornadoMesh {
         life: number; // 0-1, decreasing to 0
         size: number; // base size
         height: number; // Y position (local)
-    }> = [];
+    }>;
+    private trailActiveCount: number = 0;
 
     // Three.js objects for the trail
     private trailPoints: THREE.Points;
@@ -153,12 +156,13 @@ export class TornadoMesh {
     // ---- Decay particles (emitted while shrinking) ----
     /** Radius stored from the previous frame to detect shrinkage. */
     private _prevRadius: number = -1;
-    /** Lightweight decay particle pool (world-local coords). */
+    /** Pre-allocated decay particle pool (swap-and-pop, no runtime allocation). */
     private _decayParticles: Array<{
         x: number; y: number; z: number;
         vx: number; vy: number; vz: number;
         life: number; // 0→1, 1=alive
-    }> = [];
+    }>;
+    private _decayActiveCount: number = 0;
     private static readonly DECAY_MAX = 80;
     private _decayPoints: THREE.Points;
     private _decayPositions: Float32Array;
@@ -495,6 +499,13 @@ export class TornadoMesh {
         // ==========================================
         // 7. BOOST WIND TRAIL
         // ==========================================
+        // Pre-allocate trail particle pool (fixed size, reuse via swap-and-pop)
+        this.trailParticles = new Array(TRAIL_COUNT);
+        for (let i = 0; i < TRAIL_COUNT; i++) {
+            this.trailParticles[i] = { wx: 0, wz: 0, vx: 0, vz: 0, life: 0, size: 0, height: 0 };
+        }
+        this.trailActiveCount = 0;
+
         this.trailPositions = new Float32Array(TRAIL_COUNT * 3);
         this.trailColors    = new Float32Array(TRAIL_COUNT * 3);
         this.trailSizes     = new Float32Array(TRAIL_COUNT);
@@ -631,6 +642,13 @@ export class TornadoMesh {
         // Grey/brown falling debris particles emitted when the tornado loses radius.
         // ==========================================
         const DECAY_MAX = TornadoMesh.DECAY_MAX;
+        // Pre-allocate decay particle pool (fixed size, reuse via swap-and-pop)
+        this._decayParticles = new Array(DECAY_MAX);
+        for (let i = 0; i < DECAY_MAX; i++) {
+            this._decayParticles[i] = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0 };
+        }
+        this._decayActiveCount = 0;
+
         this._decayPositions = new Float32Array(DECAY_MAX * 3);
         this._decayColors    = new Float32Array(DECAY_MAX * 3);
         this._decaySizes     = new Float32Array(DECAY_MAX);
@@ -1124,7 +1142,7 @@ export class TornadoMesh {
             const r  = this.baseRadius;
 
             for (let e = 0; e < emitCount; e++) {
-                if (this.trailParticles.length >= TRAIL_COUNT) break;
+                if (this.trailActiveCount >= TRAIL_COUNT) break;
                 const spread   = r * 0.5 + 0.5;
                 const lateralX = -trailDirZ;
                 const lateralZ =  trailDirX;
@@ -1135,15 +1153,16 @@ export class TornadoMesh {
                 const driftSpeed = 0.5 + Math.random() * 1.0;
                 const driftAngle = Math.atan2(trailDirZ, trailDirX) + (Math.random() - 0.5) * 1.2;
 
-                this.trailParticles.push({
-                    wx: spawnWX,
-                    wz: spawnWZ,
-                    vx: Math.cos(driftAngle) * driftSpeed,
-                    vz: Math.sin(driftAngle) * driftSpeed,
-                    life: 1.0,
-                    size: (0.8 + Math.random() * 1.4) * Math.max(1.0, r * 0.3),
-                    height: (Math.random() * 0.5 + 0.1) * Math.min(funnelHeight, 4.0),
-                });
+                // Reuse particle from pool at trailActiveCount index
+                const p = this.trailParticles[this.trailActiveCount];
+                p.wx = spawnWX;
+                p.wz = spawnWZ;
+                p.vx = Math.cos(driftAngle) * driftSpeed;
+                p.vz = Math.sin(driftAngle) * driftSpeed;
+                p.life = 1.0;
+                p.size = (0.8 + Math.random() * 1.4) * Math.max(1.0, r * 0.3);
+                p.height = (Math.random() * 0.5 + 0.1) * Math.min(funnelHeight, 4.0);
+                this.trailActiveCount++;
             }
         }
 
@@ -1151,12 +1170,20 @@ export class TornadoMesh {
         const baseMeshZ = this.group.position.z;
         const lifetime  = 0.65; // seconds — within the 0.5-1 s requirement
 
-        for (let i = this.trailParticles.length - 1; i >= 0; i--) {
+        for (let i = this.trailActiveCount - 1; i >= 0; i--) {
             const p = this.trailParticles[i];
             p.life -= dtSec / lifetime;
 
             if (p.life <= 0) {
-                this.trailParticles.splice(i, 1);
+                // Swap-and-pop: move last active into this slot
+                this.trailActiveCount--;
+                if (i < this.trailActiveCount) {
+                    const last = this.trailParticles[this.trailActiveCount];
+                    const dead = this.trailParticles[i];
+                    // Swap references
+                    this.trailParticles[i] = last;
+                    this.trailParticles[this.trailActiveCount] = dead;
+                }
                 continue;
             }
 
@@ -1184,7 +1211,7 @@ export class TornadoMesh {
         }
 
         // Park unused buffer slots below ground
-        for (let i = this.trailParticles.length; i < TRAIL_COUNT; i++) {
+        for (let i = this.trailActiveCount; i < TRAIL_COUNT; i++) {
             this.trailPositions[i * 3 + 1] = -9999;
             this.trailSizes[i] = 0;
         }
@@ -1247,7 +1274,7 @@ export class TornadoMesh {
         if (this._prevRadius > 0 && r < this._prevRadius - 0.001) {
             // Emit 2-5 particles per frame while shrinking
             const emitCount = 2 + Math.floor(Math.random() * 4);
-            for (let e = 0; e < emitCount && this._decayParticles.length < DECAY_MAX; e++) {
+            for (let e = 0; e < emitCount && this._decayActiveCount < DECAY_MAX; e++) {
                 const angle   = Math.random() * Math.PI * 2;
                 const t       = Math.random(); // height ratio
                 const fFactor = Math.pow(Math.max(t, 0.001), 0.55);
@@ -1257,26 +1284,34 @@ export class TornadoMesh {
 
                 // Outward + downward velocity
                 const outSpeed = 1.5 + Math.random() * 3.0;
-                this._decayParticles.push({
-                    x:  Math.cos(angle) * dist,
-                    y:  height,
-                    z:  Math.sin(angle) * dist,
-                    vx: Math.cos(angle) * outSpeed * 0.6 + (Math.random() - 0.5) * 1.5,
-                    vy: -1.5 - Math.random() * 2.5,  // falling downward
-                    vz: Math.sin(angle) * outSpeed * 0.6 + (Math.random() - 0.5) * 1.5,
-                    life: 1.0,
-                });
+                // Reuse particle from pool at _decayActiveCount index
+                const p = this._decayParticles[this._decayActiveCount];
+                p.x  = Math.cos(angle) * dist;
+                p.y  = height;
+                p.z  = Math.sin(angle) * dist;
+                p.vx = Math.cos(angle) * outSpeed * 0.6 + (Math.random() - 0.5) * 1.5;
+                p.vy = -1.5 - Math.random() * 2.5;  // falling downward
+                p.vz = Math.sin(angle) * outSpeed * 0.6 + (Math.random() - 0.5) * 1.5;
+                p.life = 1.0;
+                this._decayActiveCount++;
             }
         }
         this._prevRadius = r;
 
         // Integrate physics and write to GPU buffer
         const GRAVITY_DECAY = 8.0;
-        for (let i = this._decayParticles.length - 1; i >= 0; i--) {
+        for (let i = this._decayActiveCount - 1; i >= 0; i--) {
             const p = this._decayParticles[i];
             p.life -= dtSec / 1.5; // 1.5s lifetime
             if (p.life <= 0) {
-                this._decayParticles.splice(i, 1);
+                // Swap-and-pop: move last active into this slot
+                this._decayActiveCount--;
+                if (i < this._decayActiveCount) {
+                    const last = this._decayParticles[this._decayActiveCount];
+                    const dead = this._decayParticles[i];
+                    this._decayParticles[i] = last;
+                    this._decayParticles[this._decayActiveCount] = dead;
+                }
                 continue;
             }
 
@@ -1290,7 +1325,7 @@ export class TornadoMesh {
             p.vz *= 0.98;
         }
 
-        const active = this._decayParticles.length;
+        const active = this._decayActiveCount;
         for (let i = 0; i < active; i++) {
             const p = this._decayParticles[i];
             this._decayPositions[i * 3]     = p.x;

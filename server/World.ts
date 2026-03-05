@@ -21,6 +21,9 @@ export class World {
     /** Cached array of all destroyed IDs — rebuilt only when the set changes. */
     private _destroyedArray: number[] = [];
     private _destroyedArrayDirty: boolean = true;
+    /** Cached array of active (non-destroyed) objects — rebuilt only when dirty. */
+    private _activeObjectsCache: WorldObject[] = [];
+    private _activeObjectsDirty: boolean = true;
     zones: TerrainZone[] = [];
     safeZones: SafeZone[] = [];
     powerUps: PowerUp[] = [];
@@ -354,6 +357,7 @@ export class World {
                     obj.health = 1;
                     this.destroyedIds.delete(obj.id);
                     this._destroyedArrayDirty = true;
+                    this._activeObjectsDirty = true;
                 }
             }
         }
@@ -381,6 +385,7 @@ export class World {
         this.destroyedIds.add(obj.id);
         this.newlyDestroyedThisTick.push(obj.id);
         this._destroyedArrayDirty = true;
+        this._activeObjectsDirty = true;
     }
 
     /** Get a cached array of all destroyed IDs (rebuilt only when dirty). */
@@ -398,7 +403,16 @@ export class World {
     }
 
     getActiveObjects(): WorldObject[] {
-        return this.objects.filter(o => !o.destroyed);
+        if (this._activeObjectsDirty) {
+            this._activeObjectsCache = this.objects.filter(o => !o.destroyed);
+            this._activeObjectsDirty = false;
+        }
+        return this._activeObjectsCache;
+    }
+
+    /** Mark the active objects cache as dirty (call when objects are destroyed or respawned). */
+    markActiveObjectsDirty(): void {
+        this._activeObjectsDirty = true;
     }
 
     getZoneAt(x: number, y: number): 'plain' | 'water' | 'mountain' {

@@ -29,6 +29,9 @@ export class SceneManager {
     // Reference to the canvas element so we can recreate the renderer on it
     private canvas: HTMLCanvasElement;
 
+    // Debounce timer for resize handler
+    private _resizeTimer: ReturnType<typeof setTimeout> | null = null;
+
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
 
@@ -79,6 +82,7 @@ export class SceneManager {
             this.dirLight.shadow.camera.bottom = -300;
         }
         this.scene.add(this.dirLight);
+        this.scene.add(this.dirLight.target);
 
         const hemiLight = new THREE.HemisphereLight(0x88aacc, 0x445533, 0.4);
         this.scene.add(hemiLight);
@@ -87,8 +91,11 @@ export class SceneManager {
         this.skybox = new SkyboxManager(this.scene);
         this.skybox.setLights(this.ambientLight, this.dirLight);
 
-        // Resize
-        window.addEventListener('resize', () => this.onResize());
+        // Resize (debounced to avoid excessive recalculations)
+        window.addEventListener('resize', () => {
+            if (this._resizeTimer !== null) clearTimeout(this._resizeTimer);
+            this._resizeTimer = setTimeout(() => this.onResize(), 150);
+        });
 
         // React to graphics quality changes
         onGraphicsChange((newPreset) => {
@@ -165,6 +172,18 @@ export class SceneManager {
         // Apply smoothed values
         this.camera.position.copy(this.camPos);
         this.camera.lookAt(this.camLookAt);
+
+        // Shadow map follows the player so we can use a tight frustum
+        if (this.dirLight && this.dirLight.castShadow) {
+            this.dirLight.position.set(x + 50, 150, y + 30);
+            this.dirLight.target.position.set(x, 0, y);
+            this.dirLight.target.updateMatrixWorld();
+            this.dirLight.shadow.camera.left = -60;
+            this.dirLight.shadow.camera.right = 60;
+            this.dirLight.shadow.camera.top = 60;
+            this.dirLight.shadow.camera.bottom = -60;
+            this.dirLight.shadow.camera.updateProjectionMatrix();
+        }
     }
 
     // Called every frame from main.ts

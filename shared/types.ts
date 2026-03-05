@@ -132,6 +132,7 @@ export interface DeltaPlayerState {
     activeEffects?: ActiveEffect[];
     protected?: boolean;
     afk?: boolean;
+    lastInputSeq?: number;
 }
 
 /**

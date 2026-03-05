@@ -2,6 +2,7 @@
 // Metrics / Telemetry
 // ============================================
 // Rolling window of the last WINDOW_SIZE tick durations.
+// Uses a ring buffer to avoid array shift() overhead.
 // Thread-safe for single-threaded Node.js.
 
 import type { MetricsResponse } from '../shared/types.js';
@@ -9,16 +10,17 @@ import type { MetricsResponse } from '../shared/types.js';
 const WINDOW_SIZE = 100;
 
 export class Metrics {
-    private tickDurations: number[] = [];
+    private tickDurations: number[] = new Array(WINDOW_SIZE).fill(0);
+    private ringIndex: number = 0;
+    private ringCount: number = 0;
     private _playerCount: number = 0;
     private _roomsActive: number = 0;
 
     /** Record a single tick's wall-clock duration in milliseconds. */
     recordTick(durationMs: number): void {
-        this.tickDurations.push(durationMs);
-        if (this.tickDurations.length > WINDOW_SIZE) {
-            this.tickDurations.shift();
-        }
+        this.tickDurations[this.ringIndex] = durationMs;
+        this.ringIndex = (this.ringIndex + 1) % WINDOW_SIZE;
+        if (this.ringCount < WINDOW_SIZE) this.ringCount++;
     }
 
     /** Update the live player/room counters (called after every tick or connection event). */
@@ -28,8 +30,7 @@ export class Metrics {
     }
 
     getSnapshot(): MetricsResponse {
-        const samples = this.tickDurations;
-        const count = samples.length;
+        const count = this.ringCount;
 
         if (count === 0) {
             return {
@@ -43,7 +44,8 @@ export class Metrics {
 
         let sum = 0;
         let max = 0;
-        for (const d of samples) {
+        for (let i = 0; i < count; i++) {
+            const d = this.tickDurations[i];
             sum += d;
             if (d > max) max = d;
         }
