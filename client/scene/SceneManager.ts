@@ -37,11 +37,11 @@ export class SceneManager {
 
         // Scene — background matches fog/horizon as fallback behind the skybox
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x3d4b57);
+        this.scene.background = new THREE.Color(0x4a5568);
 
         // Apply initial fog from preset
         const preset = getGraphicsPreset();
-        this.scene.fog = new THREE.Fog(0x3d4b57, 100, preset.fogFar);
+        this.scene.fog = new THREE.Fog(0x4a5568, 100, preset.fogFar);
 
         // Camera — low angle perspective (showing horizon)
         this.camera = new THREE.PerspectiveCamera(

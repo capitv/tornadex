@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { getGraphicsPreset } from '../settings/GraphicsConfig.js';
 import { getSmokeTexture } from './TextureAtlas.js';
+import { type TornadoSkin, getSkinById, brightenColor } from './TornadoSkins.js';
 
 // Particle counts and geometry quality are read from the active graphics preset
 // at construction time. Changing the quality level after construction affects
@@ -180,8 +181,12 @@ export class TornadoMesh {
     private afkOpacity: number = 1.0;
     private _lastAfkOpacity: number = 1.0;
 
-    constructor(isLocal: boolean = false) {
+    /** The skin applied to this tornado (stored for runtime trail color access). */
+    private skin: TornadoSkin;
+
+    constructor(isLocal: boolean = false, skinId: string = 'classic') {
         this.isLocal = isLocal;
+        this.skin = getSkinById(skinId);
         this.group = new THREE.Group();
 
         // ==========================================
@@ -193,7 +198,7 @@ export class TornadoMesh {
         this.coreGeo.translate(0, 0.5, 0);
         this.originalCorePos = new Float32Array(this.coreGeo.attributes.position.array);
 
-        const baseColor = isLocal ? 0x455a64 : 0x3d4b57;
+        const baseColor = isLocal ? brightenColor(this.skin.coreColor, 1.12) : this.skin.coreColor;
 
         // Store base positions as a separate attribute for GPU deformation.
         // The vertex shader reads from `basePosition` (immutable) and writes
@@ -216,7 +221,7 @@ export class TornadoMesh {
 
         this.coreMat = new THREE.MeshLambertMaterial({
             color: baseColor,
-            emissive: 0x05070a,
+            emissive: this.skin.coreEmissive,
             side: THREE.DoubleSide,
             transparent: true,
             opacity: 1.0,
@@ -320,18 +325,17 @@ export class TornadoMesh {
         // Inner solid cones — fill the funnel volume so there's no hollow center.
         // ConeGeometry is inherently solid (tapered), scaled each frame to match funnel shape.
         // 3 layers: 85% (mid-grey), 55% (dark), 20% (near-black core)
-        const coneConfigs = [
-            { color: isLocal ? 0x3d5060 : 0x364855, opacity: 0.95 },
-            { color: isLocal ? 0x2d3d48 : 0x273540, opacity: 0.97 },
-            { color: isLocal ? 0x1e2d35 : 0x1a2530, opacity: 1.0  },
-        ];
+        const coneConfigs = this.skin.innerConeColors.map(cc => ({
+            color: isLocal ? brightenColor(cc.color, 1.12) : cc.color,
+            opacity: cc.opacity,
+        }));
         for (const cc of coneConfigs) {
             const coneGeo = new THREE.ConeGeometry(1, 1, Math.max(8, RADIAL_SEGS - 4), 1, false);
             coneGeo.rotateX(Math.PI);
             coneGeo.translate(0, 0.5, 0);
             const coneMat = new THREE.MeshLambertMaterial({
                 color: cc.color,
-                emissive: 0x030508,
+                emissive: brightenColor(this.skin.coreEmissive, 0.6),
                 side: THREE.FrontSide,
                 transparent: true,
                 opacity: cc.opacity,
@@ -344,7 +348,7 @@ export class TornadoMesh {
         // ==========================================
         // 2. LIGHTNING / INTERNAL FLASH LIGHT
         // ==========================================
-        this.flashLight = new THREE.PointLight(0xaad4ff, 0, 50);
+        this.flashLight = new THREE.PointLight(this.skin.flashColor, 0, 50);
         this.flashLight.position.set(0, 2, 0);
         this.group.add(this.flashLight);
 
@@ -355,7 +359,7 @@ export class TornadoMesh {
         // Dynamic scale/opacity/squish is applied every frame in update().
         const shadowGeo = new THREE.CircleGeometry(1.5, 32);
         const shadowMat = new THREE.MeshBasicMaterial({
-            color: 0x0d1a0d,
+            color: this.skin.shadowColor,
             transparent: true,
             opacity: 0.35,
             depthWrite: false,
@@ -368,7 +372,7 @@ export class TornadoMesh {
         // Secondary shadow — wide, soft penumbra ring around the primary.
         const outerShadowGeo = new THREE.CircleGeometry(1.5, 32);
         const outerShadowMat = new THREE.MeshBasicMaterial({
-            color: 0x0a150a,
+            color: this.skin.shadowOuterColor,
             transparent: true,
             opacity: 0.10,
             depthWrite: false,
@@ -386,12 +390,7 @@ export class TornadoMesh {
         this.debrisColors = new Float32Array(DEBRIS_COUNT * 3);
         this.debrisSizes = new Float32Array(DEBRIS_COUNT);
 
-        const debrisPalette = [
-            [0.15, 0.10, 0.05], // dark wood/dirt
-            [0.25, 0.25, 0.25], // concrete
-            [0.1, 0.2, 0.1],    // leaves
-            [0.15, 0.15, 0.2]   // metal
-        ];
+        const debrisPalette = this.skin.debrisColors;
 
         for (let i = 0; i < DEBRIS_COUNT; i++) {
             this.debrisSeeds[i * 3] = Math.random();
@@ -432,10 +431,10 @@ export class TornadoMesh {
         this.dustSizes = new Float32Array(DUST_COUNT);
 
         for (let i = 0; i < DUST_COUNT; i++) {
-            const b = 0.35 + Math.random() * 0.2; // Earthy brown/grey
-            this.dustColors[i * 3] = b;
-            this.dustColors[i * 3 + 1] = b * 0.9;
-            this.dustColors[i * 3 + 2] = b * 0.8;
+            const b = this.skin.dustBrightness[0] + Math.random() * (this.skin.dustBrightness[1] - this.skin.dustBrightness[0]);
+            this.dustColors[i * 3] = b * this.skin.dustTint[0];
+            this.dustColors[i * 3 + 1] = b * this.skin.dustTint[1];
+            this.dustColors[i * 3 + 2] = b * this.skin.dustTint[2];
             this.dustSizes[i] = 1.0 + Math.random() * 2.0;
         }
 
@@ -470,11 +469,10 @@ export class TornadoMesh {
             this.cloudSeeds[i * 2] = Math.random();
             this.cloudSeeds[i * 2 + 1] = Math.random() * Math.PI * 2;
 
-            // Soft grey/white clouds
-            const b = 0.4 + Math.random() * 0.3;
-            this.cloudColors[i * 3] = b;
-            this.cloudColors[i * 3 + 1] = b * 0.95;
-            this.cloudColors[i * 3 + 2] = b * 0.9;
+            const b = this.skin.cloudBrightness[0] + Math.random() * (this.skin.cloudBrightness[1] - this.skin.cloudBrightness[0]);
+            this.cloudColors[i * 3] = b * this.skin.cloudTint[0];
+            this.cloudColors[i * 3 + 1] = b * this.skin.cloudTint[1];
+            this.cloudColors[i * 3 + 2] = b * this.skin.cloudTint[2];
         }
 
         const cloudGeom = new THREE.BufferGeometry();
@@ -573,7 +571,7 @@ export class TornadoMesh {
         this.boxDebris.frustumCulled = false;
         this.boxSeeds = buildSeeds(BOX_SLOTS);
 
-        const boxPalette = [0x6b6b6b, 0x8b6b47, 0x4a3728, 0x7a7a6a, 0x8c7a5a];
+        const boxPalette = this.skin.boxPalette;
         for (let i = 0; i < BOX_SLOTS; i++) {
             this.boxDebris.setColorAt(i, _pickRandom(boxPalette));
         }
@@ -590,7 +588,7 @@ export class TornadoMesh {
         this.flatDebris.frustumCulled = false;
         this.flatSeeds = buildSeeds(FLAT_SLOTS);
 
-        const flatPalette = [0x3a5a3a, 0x8b2020, 0x1a2a8b, 0x9a9a9a, 0x4a3a1a, 0x7a7a7a];
+        const flatPalette = this.skin.flatPalette;
         for (let i = 0; i < FLAT_SLOTS; i++) {
             this.flatDebris.setColorAt(i, _pickRandom(flatPalette));
         }
@@ -607,7 +605,7 @@ export class TornadoMesh {
         this.chunkDebris.frustumCulled = false;
         this.chunkSeeds = buildSeeds(CHUNK_SLOTS);
 
-        const chunkPalette = [0x7a6a5a, 0x5a5040, 0x6b5a4a, 0x4a4a4a];
+        const chunkPalette = this.skin.chunkPalette;
         for (let i = 0; i < CHUNK_SLOTS; i++) {
             this.chunkDebris.setColorAt(i, _pickRandom(chunkPalette));
         }
@@ -1200,12 +1198,12 @@ export class TornadoMesh {
             this.trailPositions[i * 3 + 1] = p.height;
             this.trailPositions[i * 3 + 2] = localZ;
 
-            // White at full life, shifts to light-blue as it fades.
+            // Skin-tinted trail: bright at full life, fades toward darker tint.
             // Squared life for a soft hold-then-snap fade.
             const lifeEased = p.life * p.life;
-            this.trailColors[i * 3]     = 0.85 + 0.15 * p.life;
-            this.trailColors[i * 3 + 1] = 0.90 + 0.10 * p.life;
-            this.trailColors[i * 3 + 2] = 1.0;
+            this.trailColors[i * 3]     = this.skin.trailColor[0] + (1.0 - this.skin.trailColor[0]) * 0.15 * p.life;
+            this.trailColors[i * 3 + 1] = this.skin.trailColor[1] + (1.0 - this.skin.trailColor[1]) * 0.10 * p.life;
+            this.trailColors[i * 3 + 2] = this.skin.trailColor[2];
 
             this.trailSizes[i] = p.size * lifeEased;
         }

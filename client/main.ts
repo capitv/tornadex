@@ -14,6 +14,7 @@ import { Interpolation } from './network/Interpolation.js';
 import { InputHandler } from './input/InputHandler.js';
 import { HUD } from './ui/HUD.js';
 import { getGraphicsQuality, setGraphicsQuality } from './settings/GraphicsConfig.js';
+import { SKIN_LIST } from './scene/TornadoSkins.js';
 import type { GameState, WorldObject, WorldObjectType, TerrainZone, SafeZone, PowerUp } from '../shared/types.js';
 
 // ---- DOM Elements ----
@@ -379,6 +380,54 @@ seedHud.addEventListener('click', () => {
             syncButtons(quality);
         });
     });
+})();
+
+// ---- Tornado Skin Selector ----
+/** Returns the currently selected skin ID from localStorage (defaults to 'classic'). */
+function getSelectedSkin(): string {
+    return localStorage.getItem('tornado-skin') || 'classic';
+}
+
+(function initSkinSelector() {
+    const container = document.createElement('div');
+    container.className = 'skin-selector';
+
+    const label = document.createElement('span');
+    label.className = 'skin-selector-label';
+    label.textContent = 'SKIN';
+    container.appendChild(label);
+
+    const row = document.createElement('div');
+    row.className = 'skin-selector-row';
+
+    const currentSkin = getSelectedSkin();
+
+    for (const skin of SKIN_LIST) {
+        const btn = document.createElement('button');
+        btn.className = 'skin-btn';
+        if (skin.id === currentSkin) btn.classList.add('active');
+        btn.dataset.skinId = skin.id;
+        btn.title = skin.name;
+        btn.textContent = skin.emoji;
+
+        btn.addEventListener('click', () => {
+            localStorage.setItem('tornado-skin', skin.id);
+            // Update active state on all buttons
+            row.querySelectorAll('.skin-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        });
+
+        row.appendChild(btn);
+    }
+
+    container.appendChild(row);
+
+    // Insert the selector into the menu container, after the input-group (play button row)
+    const menuContainer = document.querySelector('.menu-container');
+    const inputGroup = document.querySelector('.input-group');
+    if (menuContainer && inputGroup) {
+        inputGroup.insertAdjacentElement('afterend', container);
+    }
 })();
 
 // ---- Event Handlers ----
@@ -823,7 +872,8 @@ function animate(time: number): void {
         if (!mesh) {
             // Create new tornado mesh
             const isLocal = id === network.id;
-            mesh = new TornadoMesh(isLocal);
+            const skinId = isLocal ? getSelectedSkin() : 'classic';
+            mesh = new TornadoMesh(isLocal, skinId);
             tornadoMeshes.set(id, mesh);
             sceneManager.scene.add(mesh.group);
         }

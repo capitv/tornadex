@@ -570,7 +570,7 @@ export class WorldRenderer {
         const segments = 80;
         const skyGeo = new THREE.PlaneGeometry(worldSize * 4, worldSize * 4, segments, segments);
         const skyMat = new THREE.MeshLambertMaterial({
-            color: 0x3d4b57, // Matches tornado core color for seamless blend
+            color: 0x4a5568, // Matches horizon/fog color for seamless blend
             side: THREE.DoubleSide
         });
         const sky = new THREE.Mesh(skyGeo, skyMat);
