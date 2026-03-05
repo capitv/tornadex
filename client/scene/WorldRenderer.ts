@@ -759,6 +759,13 @@ export class WorldRenderer {
             }
         }
 
+        // Trees never use 3D detail meshes — set instance count to 0 so Three.js
+        // skips them entirely (GPU won't process any tree detail triangles).
+        for (const key of DETAIL_KEYS['tree'] ?? []) {
+            const im = this.instancedMeshes[key]?.[0];
+            if (im) im.count = 0;
+        }
+
         // Build spatial chunks for frustum culling
         this.buildChunks(objects);
     }
