@@ -31,8 +31,8 @@ const DEFAULT_LOD_FAR  = 350;
 // Close (0-TREE_LOD_NEAR): full 3D geometry (trunk + foliage sphere)
 // Medium (TREE_LOD_NEAR - TREE_LOD_FAR): billboard sprite (2 triangles, camera-facing)
 // Far (TREE_LOD_FAR+): culled entirely
-const DEFAULT_TREE_LOD_NEAR = 40;
-const DEFAULT_TREE_LOD_FAR  = 120;
+const DEFAULT_TREE_LOD_NEAR = 0;     // Trees always use billboard (no detail tier)
+const DEFAULT_TREE_LOD_FAR  = 99999; // Never cull — 8000 billboards = 16K tris, negligible
 const TREE_LOD_TRANSITION   = 5; // units of overlap for smooth fade (unused for now, reserved)
 
 // Run LOD + frustum check every N frames to amortise CPU cost across frames
