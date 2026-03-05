@@ -385,7 +385,11 @@ seedHud.addEventListener('click', () => {
 // ---- Tornado Skin Selector ----
 /** Returns the currently selected skin ID from localStorage (defaults to 'classic'). */
 function getSelectedSkin(): string {
-    return localStorage.getItem('tornado-skin') || 'classic';
+    try {
+        return localStorage.getItem('tornado-skin') || 'classic';
+    } catch {
+        return 'classic';
+    }
 }
 
 (function initSkinSelector() {
@@ -411,7 +415,7 @@ function getSelectedSkin(): string {
         btn.textContent = skin.emoji;
 
         btn.addEventListener('click', () => {
-            localStorage.setItem('tornado-skin', skin.id);
+            try { localStorage.setItem('tornado-skin', skin.id); } catch { /* storage full or blocked */ }
             // Update active state on all buttons
             row.querySelectorAll('.skin-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
@@ -543,7 +547,7 @@ network.onJoined((data) => {
         applySeed(data.seed);
     }
 
-    console.log(`[Game] Joined! World size: ${worldSize}, Seed: ${data.seed}, Objects: ${data.objects.length}, Water zones: ${waterZones.length}`);
+    if (import.meta.env.DEV) console.log(`[Game] Joined! World size: ${worldSize}, Seed: ${data.seed}, Objects: ${data.objects.length}, Water zones: ${waterZones.length}`);
 });
 
 network.onState((state: GameState) => {

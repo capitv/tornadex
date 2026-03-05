@@ -88,8 +88,12 @@ const listeners: ChangeListener[] = [];
 
 // ---- Active state ----
 function loadSavedQuality(): GraphicsQuality {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved === 'low' || saved === 'medium' || saved === 'high') return saved;
+    try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved === 'low' || saved === 'medium' || saved === 'high') return saved;
+    } catch {
+        // localStorage unavailable — fall through to default
+    }
     return 'medium'; // default
 }
 
@@ -113,7 +117,7 @@ export function getGraphicsQuality(): GraphicsQuality {
  */
 export function setGraphicsQuality(quality: GraphicsQuality): void {
     _currentQuality = quality;
-    localStorage.setItem(STORAGE_KEY, quality);
+    try { localStorage.setItem(STORAGE_KEY, quality); } catch { /* storage full or blocked */ }
 
     const preset = PRESETS[quality]();
     for (const fn of listeners) {
