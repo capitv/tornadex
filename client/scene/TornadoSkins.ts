@@ -39,11 +39,7 @@ const CLASSIC: TornadoSkin = {
     emoji: '\u{1F32A}\u{FE0F}',  // tornado emoji
     coreColor: 0x3d4b57,
     coreEmissive: 0x05070a,
-    innerConeColors: [
-        { color: 0x364855, opacity: 0.95 },
-        { color: 0x273540, opacity: 0.97 },
-        { color: 0x1a2530, opacity: 1.0  },
-    ],
+    innerConeColors: [],
     debrisColors: [
         [0.15, 0.10, 0.05],  // dark wood/dirt
         [0.25, 0.25, 0.25],  // concrete

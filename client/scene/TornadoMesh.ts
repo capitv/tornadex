@@ -322,15 +322,28 @@ export class TornadoMesh {
         this.coreMesh.frustumCulled = false;
         this.group.add(this.coreMesh);
 
-        // Inner solid cones — fill the funnel volume so there's no hollow center.
-        // ConeGeometry is inherently solid (tapered), scaled each frame to match funnel shape.
-        // 3 layers: 85% (mid-grey), 55% (dark), 20% (near-black core)
+        // Inner cones — 2 layers to fill the funnel volume:
+        //   [0] Outer fill (60%) — standard cone shape
+        //   [1] Tight inner core (15%) — sharper taper for a focused vortex effect
         const coneConfigs = this.skin.innerConeColors.map(cc => ({
             color: isLocal ? brightenColor(cc.color, 1.12) : cc.color,
             opacity: cc.opacity,
         }));
-        for (const cc of coneConfigs) {
+        for (let ci = 0; ci < coneConfigs.length; ci++) {
+            const cc = coneConfigs[ci];
+            // Inner core (ci=1) uses a sharper taper: radiusTop=0.3 vs 1.0
+            const radiusTop = ci === 0 ? 1.0 : 0.3;
             const coneGeo = new THREE.ConeGeometry(1, 1, Math.max(8, RADIAL_SEGS - 4), 1, false);
+            // Scale top vertices to create the taper effect
+            const posAttr = coneGeo.attributes.position;
+            for (let v = 0; v < posAttr.count; v++) {
+                const y = posAttr.getY(v);
+                if (y > 0.4) { // top vertices of ConeGeometry
+                    posAttr.setX(v, posAttr.getX(v) * radiusTop);
+                    posAttr.setZ(v, posAttr.getZ(v) * radiusTop);
+                }
+            }
+            posAttr.needsUpdate = true;
             coneGeo.rotateX(Math.PI);
             coneGeo.translate(0, 0.5, 0);
             const coneMat = new THREE.MeshLambertMaterial({
@@ -824,10 +837,11 @@ export class TornadoMesh {
 
         // Scale inner solid cones to fill the funnel volume
         const leanStr = Math.min(5.0, 3.0 / Math.max(r, 0.5));
-        const coneScales = [0.85, 0.55, 0.20];
+        // 2 inner cones: outer fill (60%) + tight inner core (15%)
+        const coneScales = [0.60, 0.15];
         for (let ci = 0; ci < this.innerCones.length; ci++) {
             const cone = this.innerCones[ci];
-            const s = coneScales[ci];
+            const s = coneScales[ci] ?? 0.15;
             const coneBaseR = groundWidth * s;
             const coneTopR  = cloudWidth * s;
             const avgR = (coneBaseR + coneTopR) * 0.5;
@@ -837,7 +851,7 @@ export class TornadoMesh {
                 0,
                 -this.velocity.z * 0.5 * leanStr,
             );
-            cone.rotation.y = this.time * (1.5 - ci * 0.3);
+            cone.rotation.y = this.time * (2.0 - ci * 0.5);
         }
 
         // ==========================================
