@@ -122,10 +122,56 @@ export class BotManager {
     // ------------------------------------------------------------------ //
 
     /**
+     * Compute the average radius of all real (non-bot) players in the room.
+     * Used to scale bot difficulty based on room state.
+     */
+    private getRealPlayerAvgRadius(): number {
+        let totalRadius = 0;
+        let count = 0;
+        for (const player of this.game.players.values()) {
+            if (!player.id.startsWith('bot_') && player.alive) {
+                totalRadius += player.radius;
+                count++;
+            }
+        }
+        return count > 0 ? totalRadius / count : 0;
+    }
+
+    /**
+     * Returns an adjusted personality based on room difficulty scaling.
+     * - Mid-game (avg radius > 3): bots become more aggressive hunters with higher speed
+     * - Late-game (avg radius > 6): bots actively hunt smaller players
+     */
+    private getScaledPersonality(base: BotPersonality, avgRadius: number): BotPersonality {
+        if (avgRadius > 6) {
+            // Late-game: very aggressive, actively hunt smaller players
+            return {
+                huntRangeMult: base.huntRangeMult * 1.6,
+                fleeRangeMult: base.fleeRangeMult * 0.7,
+                chaseRatioThreshold: Math.max(1.1, base.chaseRatioThreshold * 0.8),
+                prefersObjects: false, // always hunt players in late-game
+                boostRate: Math.min(1.0, base.boostRate + 0.3),
+            };
+        } else if (avgRadius > 3) {
+            // Mid-game: moderately more aggressive
+            return {
+                huntRangeMult: base.huntRangeMult * 1.3,
+                fleeRangeMult: base.fleeRangeMult * 0.9,
+                chaseRatioThreshold: Math.max(1.15, base.chaseRatioThreshold * 0.9),
+                prefersObjects: base.prefersObjects,
+                boostRate: Math.min(1.0, base.boostRate + 0.15),
+            };
+        }
+        return base;
+    }
+
+    /**
      * Called every game tick (before player physics).
      * Updates AI decisions and handles respawning.
      */
     update(): void {
+        const avgRadius = this.getRealPlayerAvgRadius();
+
         for (const [botId, state] of this.bots) {
             const player = state.player;
 
@@ -171,8 +217,8 @@ export class BotManager {
                 }
             }
 
-            // Compute and apply AI input
-            const input = this.computeInput(state);
+            // Compute and apply AI input (with difficulty scaling)
+            const input = this.computeInput(state, avgRadius);
             player.setInput(input);
         }
     }
@@ -253,8 +299,9 @@ export class BotManager {
     // AI decision making
     // ------------------------------------------------------------------ //
 
-    private computeInput(state: BotState): InputPayload {
-        const { player, personality } = state;
+    private computeInput(state: BotState, avgRealRadius: number): InputPayload {
+        const { player } = state;
+        const personality = this.getScaledPersonality(state.personality, avgRealRadius);
         const { x, y, radius } = player;
 
         // ---- Priority 0: Escape from stuck state ----

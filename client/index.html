@@ -20,6 +20,30 @@
   <!-- Death Vignette Overlay (dramatic darkening effect) -->
   <div id="death-vignette"></div>
 
+  <!-- Death Cam Overlay (shown for 5s after death, before death screen) -->
+  <div id="death-cam-overlay" class="hidden">
+    <div class="death-cam-text">
+      <div class="death-cam-title">DESTROYED BY</div>
+      <div class="death-cam-killer" id="death-cam-killer-name"></div>
+      <div class="death-cam-summary" id="death-cam-summary"></div>
+    </div>
+  </div>
+
+  <!-- Tutorial Overlay (shows once on first join) -->
+  <div id="tutorial-overlay" class="hidden">
+    <div class="tutorial-box">
+      <h2 class="tutorial-title">HOW TO PLAY</h2>
+      <ul class="tutorial-list">
+        <li>Move: Mouse / Touch</li>
+        <li>Boost: E / Right Click / Double Tap</li>
+        <li>Destroy objects to grow</li>
+        <li>Absorb smaller tornados</li>
+        <li>Avoid larger tornados!</li>
+      </ul>
+      <button id="tutorial-dismiss-btn" class="tutorial-btn">Got it!</button>
+    </div>
+  </div>
+
   <!-- Reconnecting Overlay (shown while Socket.IO attempts to reconnect) -->
   <div id="reconnect-overlay" class="hidden">
     <div class="reconnect-box">

@@ -39,6 +39,15 @@ const dsTime          = document.getElementById('ds-time')!;
 const dsCategory      = document.getElementById('ds-category')!;
 const deathTip        = document.getElementById('death-tip')!;
 
+// Death cam overlay elements
+const deathCamOverlay    = document.getElementById('death-cam-overlay')!;
+const deathCamKillerName = document.getElementById('death-cam-killer-name')!;
+const deathCamSummary    = document.getElementById('death-cam-summary')!;
+
+// Tutorial overlay elements
+const tutorialOverlay    = document.getElementById('tutorial-overlay')!;
+const tutorialDismissBtn = document.getElementById('tutorial-dismiss-btn')!;
+
 // ---- Core Systems ----
 const sceneManager = new SceneManager(canvas);
 const worldRenderer = new WorldRenderer(sceneManager.scene);
@@ -150,6 +159,14 @@ let currentMapSeed: number | null = null;
 let runStartTime: number      = 0;
 let runDestroyedCount: number = 0;
 let runMaxCategory: string    = 'F0';
+
+// ---- Death cam state ----
+let deathCamActive: boolean     = false;
+let deathCamKiller: string      = '';  // killer's player name, used to track their position
+let deathCamTimeout: ReturnType<typeof setTimeout> | null = null;
+
+// ---- Play Again cooldown state ----
+let respawnCooldownInterval: ReturnType<typeof setInterval> | null = null;
 
 // ---- Death screen tips ----
 const DEATH_TIPS: string[] = [
@@ -432,9 +449,18 @@ function getSelectedSkin(): string {
 
 // ---- Event Handlers ----
 playBtn.addEventListener('click', () => startGame());
-respawnBtn.addEventListener('click', () => respawnGame());
+respawnBtn.addEventListener('click', () => {
+    if (respawnBtn.hasAttribute('disabled')) return;
+    respawnGame();
+});
 nameInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') startGame();
+});
+
+// ---- Tutorial dismiss handler ----
+tutorialDismissBtn.addEventListener('click', () => {
+    tutorialOverlay.classList.add('hidden');
+    localStorage.setItem('tutorialSeen', '1');
 });
 
 function startGame(): void {
@@ -442,7 +468,16 @@ function startGame(): void {
     mainMenu.classList.add('hidden');
     deathScreen.classList.add('hidden');
     deathVignette.classList.remove('active');
+    // Cancel death cam if still active
+    if (deathCamTimeout) { clearTimeout(deathCamTimeout); deathCamTimeout = null; }
+    deathCamActive = false;
+    deathCamOverlay.classList.add('hidden');
     hud.classList.remove('hidden');
+
+    // ---- Show tutorial on first ever join ----
+    if (!localStorage.getItem('tutorialSeen')) {
+        tutorialOverlay.classList.remove('hidden');
+    }
 
     // Read the optional seed preference from the input field
     const rawSeed = seedInput.value.trim();
@@ -500,6 +535,15 @@ function startGame(): void {
 }
 
 function respawnGame(): void {
+    // Cancel death cam if still active
+    if (deathCamTimeout) { clearTimeout(deathCamTimeout); deathCamTimeout = null; }
+    deathCamActive = false;
+    deathCamOverlay.classList.add('hidden');
+    // Cancel respawn cooldown if any
+    if (respawnCooldownInterval) { clearInterval(respawnCooldownInterval); respawnCooldownInterval = null; }
+    respawnBtn.removeAttribute('disabled');
+    respawnBtn.querySelector('span:last-child')!.textContent = 'PLAY AGAIN';
+
     deathScreen.classList.add('hidden');
     deathVignette.classList.remove('active');
     hud.classList.remove('hidden');
@@ -711,8 +755,20 @@ network.onDeath((killerName: string) => {
     // Trigger dramatic vignette effect first
     deathVignette.classList.add('active');
 
-    // Delay the full death screen slightly for dramatic effect
-    setTimeout(() => {
+    // ---- Death cam: keep camera active for 5 seconds following killer ----
+    deathCamActive = true;
+    deathCamKiller = killerName;
+
+    // Show death cam overlay with killer info
+    deathCamKillerName.textContent = killerName;
+    deathCamSummary.textContent = `${runMaxCategory} \u2014 ${Math.floor(lastScore).toLocaleString()} points`;
+    deathCamOverlay.classList.remove('hidden');
+
+    // After 5 seconds, transition to the full death screen
+    if (deathCamTimeout) clearTimeout(deathCamTimeout);
+    deathCamTimeout = setTimeout(() => {
+        deathCamActive = false;
+        deathCamOverlay.classList.add('hidden');
         hud.classList.add('hidden');
         deathScreen.classList.remove('hidden');
 
@@ -726,19 +782,36 @@ network.onDeath((killerName: string) => {
         // Show a random tip
         const tip = DEATH_TIPS[Math.floor(Math.random() * DEATH_TIPS.length)];
         deathTip.textContent = tip;
-    }, 450);
 
-    // Clear tornado meshes and any associated waterspout rings
-    for (const [id, mesh] of tornadoMeshes) {
-        sceneManager.scene.remove(mesh.group);
-        mesh.dispose();
-        if (tornadoOverWater.has(id)) {
-            particleSystem.removeSplashRing(id);
+        // ---- Play Again cooldown (Task 8) ----
+        respawnBtn.setAttribute('disabled', 'true');
+        let cooldown = 2;
+        respawnBtn.querySelector('span:last-child')!.textContent = `PLAY AGAIN (${cooldown}s)`;
+        if (respawnCooldownInterval) clearInterval(respawnCooldownInterval);
+        respawnCooldownInterval = setInterval(() => {
+            cooldown--;
+            if (cooldown > 0) {
+                respawnBtn.querySelector('span:last-child')!.textContent = `PLAY AGAIN (${cooldown}s)`;
+            } else {
+                respawnBtn.querySelector('span:last-child')!.textContent = 'PLAY AGAIN';
+                respawnBtn.removeAttribute('disabled');
+                if (respawnCooldownInterval) clearInterval(respawnCooldownInterval);
+                respawnCooldownInterval = null;
+            }
+        }, 1000);
+
+        // Clear tornado meshes and any associated waterspout rings
+        for (const [id, mesh] of tornadoMeshes) {
+            sceneManager.scene.remove(mesh.group);
+            mesh.dispose();
+            if (tornadoOverWater.has(id)) {
+                particleSystem.removeSplashRing(id);
+            }
         }
-    }
-    tornadoMeshes.clear();
-    tornadoOverWater.clear();
-    prevStamina.clear();
+        tornadoMeshes.clear();
+        tornadoOverWater.clear();
+        prevStamina.clear();
+    }, 5000);
 });
 
 network.onDisconnect(() => {
@@ -772,7 +845,25 @@ function animate(time: number): void {
     // Always update the skybox — clouds + lightning animate even on the menu screen
     sceneManager.update(dt);
 
-    if (!isPlaying) {
+    if (!isPlaying && !deathCamActive) {
+        sceneManager.render();
+        return;
+    }
+
+    // ---- Death cam: follow the killer's position ----
+    if (deathCamActive && !isPlaying) {
+        const deathPlayers = interpolation.interpolate(network.id);
+        // Find the killer by name in current player list
+        let killerState: { x: number; y: number; radius: number } | null = null;
+        for (const [, ps] of deathPlayers) {
+            if (ps.name === deathCamKiller && ps.alive) {
+                killerState = ps;
+                break;
+            }
+        }
+        if (killerState) {
+            sceneManager.setCameraOffset(killerState.x, killerState.y, killerState.radius);
+        }
         sceneManager.render();
         return;
     }
@@ -1140,6 +1231,23 @@ function escapeHtml(s: string): string {
         .replace(/"/g, '&quot;');
 }
 
+function formatRelativeDate(isoDate: string): string {
+    const date = new Date(isoDate);
+    const now = new Date();
+
+    // Strip time for day comparison
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diffDays = Math.round((today.getTime() - target.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays < 7) {
+        return date.toLocaleDateString('en-US', { weekday: 'long' });
+    }
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 function renderLbRows(entries: LeaderboardRecord[]): void {
     lbTbody.innerHTML = '';
 
@@ -1165,7 +1273,7 @@ function renderLbRows(entries: LeaderboardRecord[]): void {
             <td>${escapeHtml(e.name)}</td>
             <td>${e.score.toLocaleString()}</td>
             <td class="${cc}">${escapeHtml(e.maxCategory)}</td>
-            <td>${escapeHtml(e.date)}</td>
+            <td>${escapeHtml(formatRelativeDate(e.date))}</td>
         `;
         lbTbody.appendChild(tr);
     });
@@ -1179,7 +1287,10 @@ async function fetchAndShowLeaderboard(tab: 'alltime' | 'daily'): Promise<void> 
     const url = tab === 'daily' ? '/api/leaderboard/daily' : '/api/leaderboard';
 
     try {
-        const res = await fetch(url);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data: LeaderboardRecord[] = await res.json();
         lbLoading.classList.add('hidden');
@@ -1188,6 +1299,9 @@ async function fetchAndShowLeaderboard(tab: 'alltime' | 'daily'): Promise<void> 
     } catch (err) {
         console.error('[Leaderboard] Fetch failed:', err);
         lbLoading.classList.add('hidden');
+        lbError.textContent = (err instanceof DOMException && err.name === 'AbortError')
+            ? 'Could not load leaderboard'
+            : 'Failed to load leaderboard.';
         lbError.classList.remove('hidden');
     }
 }
