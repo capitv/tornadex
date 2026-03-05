@@ -228,9 +228,9 @@ export const TORNADO_SKINS: Record<string, TornadoSkin> = {
     toxic: TOXIC,
 };
 
-/** Ordered list for the UI selector. */
+/** Ordered list for the UI selector — only Classic is available for now. */
 export const SKIN_LIST: TornadoSkin[] = [
-    CLASSIC, INFERNO, FROST, VOID, THUNDER, TOXIC,
+    CLASSIC,
 ];
 
 /** Returns the skin matching the given ID, or Classic as fallback. */

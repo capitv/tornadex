@@ -109,106 +109,32 @@ void main() {
 // Using local position.y (sphere normal Y) avoids UV seam artifacts
 // at the poles and gives a perfectly smooth gradient.
 const skyVertexShader = `
-varying float vElevation; // -1 = straight down, 0 = horizon, +1 = straight up
-varying vec3  vWorldDir;  // normalised direction on the sky sphere (for star placement)
+varying float vElevation;
 
 void main() {
-    vec3 nPos = normalize(position);
-    vElevation = nPos.y;
-    vWorldDir  = nPos;
-
+    vElevation = normalize(position).y;
     vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * mvPos;
-    // Push to far plane so sky never occludes geometry
     gl_Position.z = gl_Position.w;
 }
 `;
 
 // ---- Fragment Shader -----------------------------------------------
-// Clean gradient sky using sphere elevation (no UV seam artifacts).
-// vElevation passed from vertex shader: 0=horizon, +1=zenith, -1=underground.
+// Simple 2-color gradient: horizon grey → zenith darker grey.
 const skyFragmentShader = `
 uniform float uLightningFlash;
-uniform float uTime;
 uniform vec3  uHorizonColor;
-uniform vec3  uMidColor;
 uniform vec3  uZenithColor;
 
 varying float vElevation;
-varying vec3  vWorldDir;
-
-// ---- Procedural star helpers ----
-// Fast 3D hash -> scalar in [0,1]
-float hash31(vec3 p) {
-    p = fract(p * vec3(127.1, 311.7, 74.7));
-    p += dot(p, p.yzx + 19.19);
-    return fract((p.x + p.y) * p.z);
-}
-
-// Quantise direction into a grid cell on the unit sphere and return
-// a star brightness (0 = no star, >0 = star).  The grid is formed by
-// converting to a pseudo-equirectangular UV and snapping to cells.
-float starField(vec3 dir, float time) {
-    // Equirectangular-ish mapping (good enough for random dots)
-    float phi   = atan(dir.z, dir.x);          // -PI..PI
-    float theta = acos(clamp(dir.y, -1.0, 1.0)); // 0..PI
-
-    // Grid density — higher = more stars
-    vec2 grid = vec2(phi, theta) * vec2(80.0, 40.0);
-    vec2 cell = floor(grid);
-    vec2 f    = fract(grid);
-
-    // One star candidate per cell
-    float rnd  = hash31(vec3(cell, 1.0));
-    float rnd2 = hash31(vec3(cell, 2.0));
-    float rnd3 = hash31(vec3(cell, 3.0));
-
-    // Only ~15% of cells actually have a star
-    if (rnd > 0.15) return 0.0;
-
-    // Star position jittered inside cell
-    vec2 starPos = vec2(hash31(vec3(cell, 4.0)), hash31(vec3(cell, 5.0)));
-    float dist = length(f - starPos);
-
-    // Star radius varies (small dots)
-    float radius = 0.04 + rnd2 * 0.08;
-    float star = 1.0 - smoothstep(0.0, radius, dist);
-
-    // Gentle twinkle: sinusoidal with per-star phase and frequency
-    float twinkle = 0.7 + 0.3 * sin(time * (1.5 + rnd3 * 3.0) + rnd * 62.83);
-    star *= twinkle;
-
-    // Brightness variation
-    star *= 0.5 + rnd2 * 0.5;
-
-    return star;
-}
 
 void main() {
     float t = clamp(vElevation, 0.0, 1.0);
+    t = t * t; // ease-in: color stays near horizon longer
 
-    // ---- 3-stop gradient ----
-    // stop0 = horizon (t=0), stop1 = mid-sky (t~0.4), stop2 = zenith (t=1)
-    // Use smoothstep curves for nice blending between stops
-    float t1 = smoothstep(0.0, 0.45, t);   // 0->1 from horizon to mid
-    float t2 = smoothstep(0.35, 1.0, t);   // 0->1 from mid to zenith
+    vec3 color = mix(uHorizonColor, uZenithColor, t);
 
-    vec3 color = mix(uHorizonColor, uMidColor, t1);
-    color = mix(color, uZenithColor, t2);
-
-    // ---- Subtle atmospheric / horizon glow ----
-    // Thin warm-amber band at the very bottom of the sky (vElevation 0..0.05)
-    float glowT = 1.0 - smoothstep(0.0, 0.05, t);
-    vec3 glowColor = vec3(0.45, 0.30, 0.18); // warm amber
-    color = mix(color, glowColor, glowT * 0.25);
-
-    // ---- Stars in the upper sky ----
-    // Fade in above vElevation 0.3, full strength above 0.5
-    float starMask = smoothstep(0.3, 0.55, t);
-    float stars = starField(normalize(vWorldDir), uTime);
-    color += vec3(0.85, 0.9, 1.0) * stars * starMask * 0.7;
-
-    // ---- Lightning flash ----
+    // Lightning flash
     color = mix(color, vec3(0.85, 0.92, 1.0), uLightningFlash * 0.75);
 
     gl_FragColor = vec4(color, 1.0);
@@ -342,19 +268,15 @@ export class SkyboxManager {
         this.scene = scene;
 
         // Horizon = same as scene fog for seamless blend
-        // 3-stop gradient: horizon -> mid-sky -> zenith
-        const horizonColor = new THREE.Color(0x4a5568); // warm grey-blue
-        const midColor     = new THREE.Color(0x2d3748); // cooler blue-grey
-        const zenithColor  = new THREE.Color(0x1a1e2e); // deep dark blue-black
+        const horizonColor = new THREE.Color(0x4a5568);
+        const zenithColor  = new THREE.Color(0x1e2430); // darker grey at top
 
         this.skyMat = new THREE.ShaderMaterial({
             vertexShader:   skyVertexShader,
             fragmentShader: skyFragmentShader,
             uniforms: {
                 uLightningFlash: { value: 0 },
-                uTime:           { value: 0 },
                 uHorizonColor:   { value: horizonColor },
-                uMidColor:       { value: midColor },
                 uZenithColor:    { value: zenithColor },
             },
             side:       THREE.BackSide,   // render inside of sphere
@@ -408,9 +330,6 @@ export class SkyboxManager {
 
     update(dtMs: number): void {
         this.elapsed += dtMs;
-
-        // Update sky shader time for star twinkle
-        this.skyMat.uniforms.uTime.value = this.elapsed * 0.001;
 
         // ---- countdown to next strike ----
         this.nextStrikeIn -= dtMs;

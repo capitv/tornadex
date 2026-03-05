@@ -523,7 +523,7 @@ network.onJoined((data) => {
     hudManager.setWorldSize(worldSize);
     worldRenderer.createGround(worldSize);
     worldRenderer.createZones(data.zones);
-    worldRenderer.createCloudCeiling(worldSize);
+    // Cloud ceiling removed — sky gradient handles the atmosphere
     worldRenderer.createInitialObjects(data.objects);
 
     // Render safe haven zone circles on the ground
@@ -942,13 +942,7 @@ function animate(time: number): void {
                 runMaxCategory = currentCat;
             }
 
-            // Keep cloud ceiling above tornado AND camera so player never sees through it
-            if (worldRenderer.cloudCeiling) {
-                const clampedR = Math.min(state.radius, 25);
-                const camHeight = 9 + Math.log2(1 + clampedR) * 6 + (clampedR > 2 ? (clampedR - 2) * 12 : 0);
-                const tornadoTop = state.radius * 10;
-                worldRenderer.cloudCeiling.position.y = Math.max(45, tornadoTop, camHeight + 20);
-            }
+            // Cloud ceiling removed — sky gradient handles atmosphere
 
             // Emit dust particles around local tornado (use predicted pos for immediacy)
             if (Math.random() < 0.3) {
