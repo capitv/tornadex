@@ -513,7 +513,17 @@ try {
     }
 } catch { /* localStorage unavailable */ }
 
+function requestFullscreen(): void {
+    // On mobile, request fullscreen to hide URL bar
+    if (navigator.maxTouchPoints > 0) {
+        const el = document.documentElement as any;
+        const req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+        if (req) req.call(el).catch(() => { /* user denied or not supported */ });
+    }
+}
+
 function startGame(): void {
+    requestFullscreen();
     playerName = nameInput.value.trim() || 'Tornado';
     mainMenu.classList.add('hidden');
     deathScreen.classList.add('hidden');
@@ -586,6 +596,7 @@ function startGame(): void {
 }
 
 function respawnGame(): void {
+    requestFullscreen();
     // Cancel death cam if still active
     if (deathCamTimeout) { clearTimeout(deathCamTimeout); deathCamTimeout = null; }
     deathCamActive = false;
