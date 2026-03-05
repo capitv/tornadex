@@ -34,7 +34,7 @@ npx vite build
 
 echo ""
 echo ">>> Buildando server (tsc)..."
-npx tsc -p tsconfig.server.json --outDir dist --rootDir .
+npx tsc -p tsconfig.server.json
 
 # ---- Reiniciar servidor via PM2 ----
 echo ""
