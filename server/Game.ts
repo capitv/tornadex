@@ -483,8 +483,9 @@ export class Game {
                     const bShieldProtected = b.hasEffect('shield');
                     const aShieldProtected = a.hasEffect('shield');
 
-                    const bProtected = bSpawnProtected || bSafeZoneProtected || bShieldProtected;
-                    const aProtected = aSpawnProtected || aSafeZoneProtected || aShieldProtected;
+                    // Safe zones only protect against world-object decay, not PvP absorption
+                    const bProtected = bSpawnProtected || bShieldProtected;
+                    const aProtected = aSpawnProtected || aShieldProtected;
 
                     // Compute size ratio (larger / smaller, always >= 1.0).
                     // This drives the absorption-vs-repulsion decision.

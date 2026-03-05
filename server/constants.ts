@@ -27,7 +27,7 @@ export const OBJECT_GROWTH: Record<WorldObjectType, number> = {
 };
 
 // Tornado absorption: attacker must be X times bigger
-export const ABSORB_RATIO = 1.2;
+export const ABSORB_RATIO = 1.1;
 
 // Decay when idle (per tick)
 export const IDLE_DECAY_RATE = 0.001;
@@ -103,8 +103,8 @@ export const VEHICLE_SIZE = 0.8;
 export const VEHICLE_COLLISION_RADIUS = 1.5;
 
 // ---- Spawn Protection ----
-/** Duration of spawn invulnerability in milliseconds (3 seconds). */
-export const SPAWN_PROTECTION_MS = 3000;
+/** Duration of spawn invulnerability in milliseconds (1.5 seconds). */
+export const SPAWN_PROTECTION_MS = 1500;
 
 // ---- Safe Haven Zones ----
 /** Tornadoes with radius strictly below this value are protected inside safe zones (F0/F1 only). */
