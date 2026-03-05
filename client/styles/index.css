@@ -54,6 +54,124 @@ body {
   display: block;
 }
 
+/* ==== Death cam overlay ==== */
+#death-cam-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+#death-cam-overlay.hidden {
+  display: none;
+}
+
+.death-cam-text {
+  text-align: center;
+  animation: deathCamFadeIn 0.5s ease forwards;
+}
+
+.death-cam-title {
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  margin-bottom: 0.3rem;
+}
+
+.death-cam-killer {
+  font-size: 3rem;
+  font-weight: 900;
+  color: var(--danger);
+  text-shadow: 0 0 20px rgba(255, 71, 87, 0.6);
+  margin-bottom: 0.8rem;
+}
+
+.death-cam-summary {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.05em;
+}
+
+@keyframes deathCamFadeIn {
+  0%   { opacity: 0; transform: scale(0.9); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* ==== Tutorial overlay ==== */
+#tutorial-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+#tutorial-overlay.hidden {
+  display: none;
+}
+
+.tutorial-box {
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass-bright);
+  border-radius: var(--radius-lg);
+  padding: 2.5rem 3rem;
+  text-align: center;
+  max-width: 420px;
+  backdrop-filter: blur(16px);
+}
+
+.tutorial-title {
+  font-size: 1.8rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  margin-bottom: 1.5rem;
+  color: var(--accent-glow);
+}
+
+.tutorial-list {
+  list-style: none;
+  text-align: left;
+  margin-bottom: 2rem;
+}
+
+.tutorial-list li {
+  font-size: 1.1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border-glass);
+  color: var(--text-primary);
+}
+
+.tutorial-list li:last-child {
+  border-bottom: none;
+}
+
+.tutorial-btn {
+  font-family: var(--font);
+  font-size: 1.1rem;
+  font-weight: 700;
+  padding: 0.8rem 2.5rem;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+}
+
+.tutorial-btn:hover {
+  background: var(--accent-glow);
+  transform: scale(1.05);
+}
+
 /* ==== Death vignette ==== */
 #death-vignette {
   position: fixed;
@@ -389,6 +507,13 @@ body {
 
 #respawn-btn:active {
   transform: scale(0.97);
+}
+
+#respawn-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  animation: none;
+  pointer-events: none;
 }
 
 .respawn-btn-icon {

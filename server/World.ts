@@ -361,7 +361,8 @@ export class World {
 
     destroyObject(obj: WorldObject): void {
         obj.destroyed = true;
-        obj.respawnTimer = OBJECT_RESPAWN_TICKS;
+        // Add ±20% random jitter to prevent all objects respawning simultaneously
+        obj.respawnTimer = Math.round(OBJECT_RESPAWN_TICKS * (0.8 + Math.random() * 0.4));
         this.destroyedIds.add(obj.id);
         this.newlyDestroyedThisTick.push(obj.id);
         this._destroyedArrayDirty = true;
