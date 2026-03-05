@@ -17,6 +17,9 @@ const logger = new Logger('RoomManager');
 /** Maximum real players per room (bots do not count toward this cap). */
 export const MAX_ROOM_PLAYERS = 20;
 
+/** Maximum number of rooms that can exist simultaneously. */
+const MAX_ROOMS = 20;
+
 /** After a room has been empty for this long (ms) it will be destroyed. */
 const ROOM_EMPTY_TTL_MS = 30_000;
 
@@ -67,6 +70,15 @@ export class RoomManager {
             // Delta state update — enables delta compression
             (playerId: string, delta: DeltaGameState) => {
                 this.io.to(playerId).emit('game:delta', delta);
+            },
+            // Player kick (anti-cheat / AFK timeout)
+            (playerId: string, reason: string) => {
+                const socket = this.io.sockets.sockets.get(playerId);
+                if (socket) {
+                    logger.info(`Kicking player ${playerId}: ${reason}`);
+                    socket.emit('game:kicked', { reason });
+                    socket.disconnect(true);
+                }
             },
         );
 
@@ -119,9 +131,10 @@ export class RoomManager {
 
     /**
      * Find the room with the fewest real players that is not yet full.
-     * If no such room exists, create a new one.
+     * If no such room exists, create a new one (respecting MAX_ROOMS cap).
+     * Returns null if all rooms are full and MAX_ROOMS has been reached.
      */
-    private getBestRoom(): RoomEntry {
+    private getBestRoom(): RoomEntry | null {
         let best: RoomEntry | null = null;
         let bestCount = Infinity;
 
@@ -134,6 +147,9 @@ export class RoomManager {
         }
 
         if (!best) {
+            if (this.rooms.size >= MAX_ROOMS) {
+                return null;
+            }
             best = this.createRoom();
         }
 
@@ -142,10 +158,16 @@ export class RoomManager {
 
     /**
      * Assign a newly connected socket to a room.
-     * Returns the room entry so the caller can emit `game:joined`.
+     * Returns the room entry so the caller can emit `game:joined`,
+     * or null if the server is at maximum room capacity.
      */
-    joinRoom(socketId: string, playerName: string): RoomEntry {
+    joinRoom(socketId: string, playerName: string): RoomEntry | null {
         const entry = this.getBestRoom();
+
+        if (!entry) {
+            logger.warn(`Rejected player ${playerName} (${socketId}) — server at max room capacity (${MAX_ROOMS})`);
+            return null;
+        }
 
         // Cancel the empty-timer now that someone is joining
         this.cancelEmptyTimer(entry);

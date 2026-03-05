@@ -23,9 +23,24 @@ const serverLogger = new Logger('Server');
 const app = express();
 const httpServer = createServer(app);
 
+// ============================================================
+// CORS Origin Whitelist (Task 4)
+// ============================================================
+
+const DEFAULT_ORIGINS = [
+    'http://localhost:5173',
+    'http://localhost:3001',
+    'https://tornadex.com',
+    'https://www.tornadex.com',
+];
+
+const allowedOrigins: string[] = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
+    : DEFAULT_ORIGINS;
+
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
     cors: {
-        origin: '*',
+        origin: allowedOrigins,
         methods: ['GET', 'POST'],
     },
     pingTimeout: 10000,
@@ -116,6 +131,78 @@ function isValidInput(input: unknown): input is InputPayload {
 }
 
 // ============================================================
+// Name Validation & Sanitization (Task 1)
+// ============================================================
+
+/** Strip HTML tags, trim, enforce length, and escape special characters. */
+function sanitizeName(raw: unknown): string {
+    if (typeof raw !== 'string') return 'Tornado';
+
+    // Strip HTML tags
+    let name = raw.replace(/<[^>]*>/g, '');
+
+    // Trim whitespace
+    name = name.trim();
+
+    // Enforce length
+    if (name.length < 1 || name.length > 16) {
+        if (name.length > 16) {
+            name = name.slice(0, 16);
+        } else {
+            return 'Tornado';
+        }
+    }
+
+    // Sanitize: replace special characters with HTML entities
+    name = name
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+    // After sanitization, re-check that we still have content
+    if (name.length < 1) return 'Tornado';
+
+    return name;
+}
+
+// ============================================================
+// Respawn Rate Limit (Task 5)
+// ============================================================
+
+/** Map of socketId → last respawn timestamp (Date.now()). */
+const respawnCooldowns = new Map<string, number>();
+const RESPAWN_COOLDOWN_MS = 2000;
+
+// ============================================================
+// Leaderboard API Rate Limit (Task 9)
+// ============================================================
+
+interface ApiRateEntry {
+    count: number;
+    resetTime: number; // epoch ms when the current minute window resets
+}
+
+const apiRateMap = new Map<string, ApiRateEntry>();
+const API_RATE_MAX = 30;       // max requests per window
+const API_RATE_WINDOW_MS = 60_000; // 1 minute
+
+function checkApiRate(ip: string): boolean {
+    const now = Date.now();
+    let entry = apiRateMap.get(ip);
+
+    if (!entry || now >= entry.resetTime) {
+        entry = { count: 1, resetTime: now + API_RATE_WINDOW_MS };
+        apiRateMap.set(ip, entry);
+        return true;
+    }
+
+    entry.count++;
+    return entry.count <= API_RATE_MAX;
+}
+
+// ============================================================
 // Socket.IO Connection Handling
 // ============================================================
 
@@ -123,7 +210,16 @@ io.on('connection', (socket) => {
     serverLogger.info(`Client connected: ${socket.id}`);
 
     socket.on('player:join', (data) => {
-        const entry = roomManager.joinRoom(socket.id, data.name);
+        // Validate and sanitize name (Task 1)
+        const name = sanitizeName(data.name);
+
+        const entry = roomManager.joinRoom(socket.id, name);
+
+        // If room join was rejected (max rooms cap reached - Task 8)
+        if (!entry) {
+            socket.emit('game:error', { message: 'Server is full. Please try again later.' });
+            return;
+        }
 
         // Send join confirmation with this room's world state
         socket.emit('game:joined', {
@@ -149,10 +245,20 @@ io.on('connection', (socket) => {
         const player = entry.game.players.get(socket.id);
         if (player) {
             player.setInput(input);
+            // Record input for AFK tracking (Task 7)
+            entry.game.recordInput(socket.id);
         }
     });
 
     socket.on('player:respawn', () => {
+        // Respawn rate limit (Task 5)
+        const now = Date.now();
+        const lastRespawn = respawnCooldowns.get(socket.id);
+        if (lastRespawn && (now - lastRespawn) < RESPAWN_COOLDOWN_MS) {
+            return; // Silently ignore — cooldown not elapsed
+        }
+        respawnCooldowns.set(socket.id, now);
+
         const entry = roomManager.getRoomForSocket(socket.id);
         if (!entry) return;
 
@@ -194,6 +300,7 @@ io.on('connection', (socket) => {
         clearInterval(rttInterval);
         roomManager.leaveRoom(socket.id);
         rateMap.delete(socket.id);
+        respawnCooldowns.delete(socket.id);
     });
 });
 
@@ -213,10 +320,36 @@ app.get('/health', (_req, res) => {
     res.json(body);
 });
 
-// GET /metrics
-app.get('/metrics', (_req, res) => {
+// GET /metrics (Task 6 — protected endpoint)
+app.get('/metrics', (req, res) => {
+    // Allow from localhost or with valid bearer token
+    const remoteAddr = req.ip || req.socket.remoteAddress || '';
+    const isLocalhost = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remoteAddr);
+
+    const metricsToken = process.env.METRICS_TOKEN;
+    let hasValidToken = false;
+    if (metricsToken) {
+        const authHeader = req.headers.authorization;
+        hasValidToken = authHeader === `Bearer ${metricsToken}`;
+    }
+
+    if (!isLocalhost && !hasValidToken) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+    }
+
     const body: MetricsResponse = metrics.getSnapshot();
     res.json(body);
+});
+
+// ---- Leaderboard API rate limit middleware (Task 9) ----
+app.use('/api', (req, res, next) => {
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    if (!checkApiRate(ip)) {
+        res.status(429).json({ error: 'Too many requests. Max 30 per minute.' });
+        return;
+    }
+    next();
 });
 
 // GET /api/leaderboard — top 20 all-time entries

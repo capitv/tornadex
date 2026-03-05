@@ -1,8 +1,9 @@
 // ============================================
 // Anti-Cheat — Position & Growth Validation
 // ============================================
-// Runs every tick inside Game.ts. Does NOT kick players — logs warnings only.
-// Rate-limited to avoid console flooding.
+// Runs every tick inside Game.ts. Tracks violations per player and
+// returns IDs of players that should be kicked after 3 violations
+// within a 60-second window.
 
 import { Logger } from './Logger.js';
 import { PLAYER_SPEED, SPEED_BOOST_MULTIPLIER } from './constants.js';
@@ -16,6 +17,12 @@ interface PlayerSnapshot {
     radius: number;
 }
 
+/** Violation tracking entry. */
+interface ViolationEntry {
+    count: number;
+    firstTime: number; // Date.now() epoch ms when the first violation in this window occurred
+}
+
 /**
  * Maximum distance a player should be able to travel in one tick,
  * accounting for the worst-case speed boost + a 1.5x network-tolerance margin.
@@ -24,13 +31,19 @@ const MAX_SPEED_TOLERANCE = PLAYER_SPEED * SPEED_BOOST_MULTIPLIER * 1.8 * 1.5;
 
 /**
  * Minimum radius growth per tick to even consider suspicious.
- * Normal object destruction gives 0.02–0.15, admin grow gives 0.05.
+ * Normal object destruction gives 0.02–0.15.
  * We only flag growth > 0.20 which is beyond any single legitimate action.
  */
 const RADIUS_GROWTH_THRESHOLD = 0.20;
 
 /** Minimum ticks between consecutive warnings for the same player. */
 const WARN_COOLDOWN_TICKS = 100; // ~5 seconds at 20 tick/s
+
+/** Violation window in ms — violations older than this are reset. */
+const VIOLATION_WINDOW_MS = 60_000;
+
+/** Number of violations within the window before a kick is issued. */
+const MAX_VIOLATIONS = 3;
 
 export class AntiCheat {
     /** Previous-tick snapshots, keyed by player socket ID. */
@@ -39,6 +52,8 @@ export class AntiCheat {
     private lastWarnTick: Map<string, number> = new Map();
     /** Global tick counter. */
     private tick: number = 0;
+    /** Violation tracker keyed by player socket ID. */
+    private violations: Map<string, ViolationEntry> = new Map();
 
     /**
      * Call once per tick AFTER physics have been applied.
@@ -47,13 +62,15 @@ export class AntiCheat {
      * @param absorbedIds  Set of player IDs that were absorbed/killed this tick.
      * @param playerHadLegitGrowth  Returns true if the player had a legitimate
      *   reason to grow this tick (destroyed objects, absorbed a player, etc.).
+     * @returns Array of player IDs that should be kicked (3+ violations in 60s).
      */
     check(
         players: Iterable<{ id: string; x: number; y: number; radius: number; alive: boolean }>,
         absorbedIds: Set<string>,
         playerHadLegitGrowth: (id: string) => boolean,
-    ): void {
+    ): string[] {
         this.tick++;
+        const toKick: string[] = [];
 
         for (const player of players) {
             if (!player.alive) {
@@ -64,6 +81,8 @@ export class AntiCheat {
             const prev = this.snapshots.get(player.id);
 
             if (prev) {
+                let violated = false;
+
                 // --- Position check ---
                 const dx = player.x - prev.x;
                 const dy = player.y - prev.y;
@@ -75,6 +94,7 @@ export class AntiCheat {
                         `Player ${player.id} moved ${dist.toFixed(2)} units in one tick ` +
                         `(max allowed: ${MAX_SPEED_TOLERANCE.toFixed(2)}) — possible teleport/speed hack`,
                     );
+                    violated = true;
                 }
 
                 // --- Radius growth check ---
@@ -87,6 +107,15 @@ export class AntiCheat {
                             `Player ${player.id} radius grew by ${radiusDelta.toFixed(4)} ` +
                             `without legitimate cause — suspicious`,
                         );
+                        violated = true;
+                    }
+                }
+
+                // --- Violation tracking ---
+                if (violated) {
+                    const shouldKick = this._recordViolation(player.id);
+                    if (shouldKick) {
+                        toKick.push(player.id);
                     }
                 }
             }
@@ -98,6 +127,32 @@ export class AntiCheat {
                 radius: player.radius,
             });
         }
+
+        return toKick;
+    }
+
+    /**
+     * Record a violation for a player. Returns true if the player should be kicked.
+     */
+    private _recordViolation(playerId: string): boolean {
+        const now = Date.now();
+        let entry = this.violations.get(playerId);
+
+        if (!entry || (now - entry.firstTime) > VIOLATION_WINDOW_MS) {
+            // Start a new window
+            entry = { count: 1, firstTime: now };
+            this.violations.set(playerId, entry);
+            return false;
+        }
+
+        entry.count++;
+
+        if (entry.count >= MAX_VIOLATIONS) {
+            logger.warn(`Kicking player ${playerId} for ${entry.count} anti-cheat violations within 60s`);
+            return true;
+        }
+
+        return false;
     }
 
     /** Rate-limited warning: at most one log per player per WARN_COOLDOWN_TICKS. */
@@ -112,5 +167,6 @@ export class AntiCheat {
     removePlayer(id: string): void {
         this.snapshots.delete(id);
         this.lastWarnTick.delete(id);
+        this.violations.delete(id);
     }
 }

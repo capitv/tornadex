@@ -19,8 +19,6 @@ export class InputHandler {
     private mouseY: number = 0;
     private active: boolean = false;
     private boosting: boolean = false;
-    private adminGrow: boolean = false;
-    private adminShrink: boolean = false;
     private canvas: HTMLCanvasElement;
 
     // Mobile joystick
@@ -136,13 +134,9 @@ export class InputHandler {
     private bindKeyboardEvents(): void {
         window.addEventListener('keydown', (e) => {
             if (e.key === 'e' || e.key === 'E') this.boosting = true;
-            if (e.key === 'ArrowUp') this.adminGrow = true;
-            if (e.key === 'ArrowDown') this.adminShrink = true;
         });
         window.addEventListener('keyup', (e) => {
             if (e.key === 'e' || e.key === 'E') this.boosting = false;
-            if (e.key === 'ArrowUp') this.adminGrow = false;
-            if (e.key === 'ArrowDown') this.adminShrink = false;
         });
     }
 
@@ -308,8 +302,6 @@ export class InputHandler {
                 angle: this.joystick.angle,
                 active: isActive,
                 boost: this.boosting,
-                adminGrow: this.adminGrow,
-                adminShrink: this.adminShrink,
                 seq: 0, // placeholder — overwritten by main.ts before sending
             };
         }
@@ -329,8 +321,6 @@ export class InputHandler {
             angle,
             active: isActive,
             boost: this.boosting,
-            adminGrow: this.adminGrow,
-            adminShrink: this.adminShrink,
             seq: 0, // placeholder — overwritten by main.ts before sending
         };
     }

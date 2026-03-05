@@ -182,14 +182,6 @@ export class Player {
         this.x += this.velocityX * dt;
         this.y += this.velocityY * dt;
 
-        // Admin controls for testing sizes
-        if (this.input.adminGrow) {
-            this.radius = Math.min(PLAYER_MAX_RADIUS, this.radius + 0.05); // Rapid growth
-        }
-        if (this.input.adminShrink) {
-            this.radius = Math.max(PLAYER_MIN_RADIUS, this.radius - 0.05); // Rapid shrink
-        }
-
         // Clamp to world bounds
         this.x = Math.max(this.radius, Math.min(WORLD_SIZE - this.radius, this.x));
         this.y = Math.max(this.radius, Math.min(WORLD_SIZE - this.radius, this.y));

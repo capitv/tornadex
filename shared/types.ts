@@ -159,8 +159,6 @@ export interface InputPayload {
     angle: number;       // Direction angle in radians
     active: boolean;     // Whether player is providing input (moving)
     boost: boolean;      // Whether E key is held for speed boost
-    adminGrow?: boolean; // Up arrow to grow (testing)
-    adminShrink?: boolean; // Down arrow to shrink (testing)
     seq?: number;        // Monotonically increasing sequence number for reconciliation
 }
 
@@ -177,6 +175,10 @@ export interface ServerToClientEvents {
     'server:shutdown': (data: { countdownMs: number; reason: string }) => void;
     /** Emitted to a player when they exceed rate limits. */
     'server:warning': (data: { message: string; warningCount: number }) => void;
+    /** Emitted to a player before they are forcefully disconnected. */
+    'game:kicked': (data: { reason: string }) => void;
+    /** Emitted when a room join is rejected (e.g. max rooms reached). */
+    'game:error': (data: { message: string }) => void;
 }
 
 export interface ClientToServerEvents {

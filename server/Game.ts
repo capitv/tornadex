@@ -57,6 +57,14 @@ export class Game {
     private onPlayerDeath: ((playerId: string, killerName: string) => void) | null = null;
     /** Optional hook called at the end of every tick with the wall-clock duration in ms. */
     private onTickMetrics: ((tickMs: number) => void) | null = null;
+    /** Optional hook called when a player should be kicked (anti-cheat or AFK). */
+    private onPlayerKick: ((playerId: string, reason: string) => void) | null = null;
+
+    // ---- AFK session timeout tracking ----
+    /** Last time (Date.now() epoch ms) each player sent input, keyed by socket ID. */
+    private lastInputTime: Map<string, number> = new Map();
+    /** AFK timeout threshold in milliseconds (5 minutes). */
+    private static readonly AFK_TIMEOUT_MS = 300_000;
 
     // ---- Anti-cheat: per-tick tracking ----
     private objectsDestroyedByPlayer: Map<string, boolean> = new Map();
@@ -110,11 +118,13 @@ export class Game {
         onPlayerDeath: (playerId: string, killerName: string) => void,
         onTickMetrics?: (tickMs: number) => void,
         onPlayerDeltaUpdate?: (playerId: string, delta: DeltaGameState) => void,
+        onPlayerKick?: (playerId: string, reason: string) => void,
     ): void {
         this.onPlayerStateUpdate = onPlayerStateUpdate;
         this.onPlayerDeath = onPlayerDeath;
         this.onTickMetrics = onTickMetrics ?? null;
         this.onPlayerDeltaUpdate = onPlayerDeltaUpdate ?? null;
+        this.onPlayerKick = onPlayerKick ?? null;
     }
 
     start(): void {
@@ -165,6 +175,7 @@ export class Game {
         this.previousVehicles.set(id, '');
         this.acknowledgedDestroyedIds.set(id, new Set());
         this.playerSentTicks.set(id, 0);
+        this.lastInputTime.set(id, Date.now());
 
         logger.info(`Player joined: ${name} (${id}) — total: ${this.players.size}`);
 
@@ -175,6 +186,11 @@ export class Game {
         }
 
         return player;
+    }
+
+    /** Record that a player sent input (resets AFK timer). */
+    recordInput(id: string): void {
+        this.lastInputTime.set(id, Date.now());
     }
 
     removePlayer(id: string): void {
@@ -192,6 +208,7 @@ export class Game {
             this.acknowledgedDestroyedIds.delete(id);
             this.playerSentTicks.delete(id);
             this.playerJoinTimes.delete(id);
+            this.lastInputTime.delete(id);
 
             // Clean up anti-cheat tracking
             this.antiCheat.removePlayer(id);
@@ -608,11 +625,29 @@ export class Game {
         }
 
         // ---- Anti-cheat checks (after physics, before state broadcast) ----
-        this.antiCheat.check(
+        const cheaterIds = this.antiCheat.check(
             this.players.values(),
             this.absorbedThisTick,
             (id) => this.objectsDestroyedByPlayer.get(id) === true,
         );
+        // Kick cheaters via callback
+        for (const cheaterId of cheaterIds) {
+            if (this.onPlayerKick) {
+                this.onPlayerKick(cheaterId, 'Anti-cheat violation');
+            }
+        }
+
+        // ---- AFK session timeout (5 minutes without input) ----
+        const afkNow = Date.now();
+        for (const [playerId, lastTime] of this.lastInputTime) {
+            // Skip bots — they don't send input via sockets
+            if (playerId.startsWith('bot_')) continue;
+            if (afkNow - lastTime > Game.AFK_TIMEOUT_MS) {
+                if (this.onPlayerKick) {
+                    this.onPlayerKick(playerId, 'AFK timeout');
+                }
+            }
+        }
 
         // Update world (respawns, power-up respawns) and advance vehicle positions
         this.world.update();
