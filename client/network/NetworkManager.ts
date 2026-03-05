@@ -136,6 +136,11 @@ export class NetworkManager {
             }
         });
 
+        // Server-initiated RTT probe — echo timestamp back immediately
+        this.socket.on('server:rtt_ping', (data) => {
+            this.socket.emit('server:rtt_pong', { t: data.t });
+        });
+
         this.socket.on('disconnect', () => {
             console.log('[Network] Disconnected');
             if (this.onDisconnectCallback) {

@@ -26,6 +26,16 @@ const TYPE_COLORS: Record<string, number[]> = {
 const DEFAULT_LOD_NEAR = 300;
 const DEFAULT_LOD_FAR  = 600;
 
+// ---- Tree-specific LOD thresholds ----
+// Trees are the most numerous object (~8000) and use aggressive LOD to cut triangles.
+// Close (0-TREE_LOD_NEAR): full 3D geometry (trunk + foliage sphere)
+// Medium (TREE_LOD_NEAR - TREE_LOD_FAR): billboard sprite (2 triangles, camera-facing)
+// Far (TREE_LOD_FAR+): culled entirely
+// A small transition band softens the pop between levels.
+const DEFAULT_TREE_LOD_NEAR = 80;
+const DEFAULT_TREE_LOD_FAR  = 200;
+const TREE_LOD_TRANSITION   = 5; // units of overlap for smooth fade (unused for now, reserved)
+
 // Run LOD + frustum check every N frames to amortise CPU cost across frames
 const LOD_UPDATE_INTERVAL = 15;
 
@@ -97,10 +107,18 @@ export class WorldRenderer {
     private objectLodIndex: Map<number, number>    = new Map();
     private lodTypeCounters: Record<string, number> = {};
     private _lodFrame = 0;
+    // Billboard shader uniform — updated each frame so tree LOD planes face camera
+    private _billboardCamPos = { value: new THREE.Vector3() };
+    // Cache of original LOD matrices keyed by "type:lodIndex" so _showLodSlot can
+    // restore the correct scale after _hideLodSlot zeroed it out.
+    private _originalLodMatrices: Map<string, THREE.Matrix4> = new Map();
 
     // ---- LOD distances (updated from graphics preset) ----
     private _lodNearDistance = DEFAULT_LOD_NEAR;
     private _lodFarDistance  = DEFAULT_LOD_FAR;
+    // Tree-specific aggressive LOD distances
+    private _treeLodNearDistance = DEFAULT_TREE_LOD_NEAR;
+    private _treeLodFarDistance  = DEFAULT_TREE_LOD_FAR;
 
     // ---- Frustum culling ----
     private chunks: Map<string, Chunk>    = new Map();
@@ -139,10 +157,15 @@ export class WorldRenderer {
             // Low quality: cull distance is finite, compress LOD range to match
             this._lodFarDistance  = preset.worldCullDistance;
             this._lodNearDistance = Math.min(DEFAULT_LOD_NEAR, preset.worldCullDistance * 0.5);
+            // Tree distances: use the tighter of preset-based or default tree thresholds
+            this._treeLodFarDistance  = Math.min(DEFAULT_TREE_LOD_FAR, preset.worldCullDistance);
+            this._treeLodNearDistance = Math.min(DEFAULT_TREE_LOD_NEAR, this._treeLodFarDistance * 0.4);
         } else {
             // Medium / High quality: use default LOD distances
             this._lodNearDistance = DEFAULT_LOD_NEAR;
             this._lodFarDistance  = DEFAULT_LOD_FAR;
+            this._treeLodNearDistance = DEFAULT_TREE_LOD_NEAR;
+            this._treeLodFarDistance  = DEFAULT_TREE_LOD_FAR;
         }
     }
 
@@ -819,9 +842,31 @@ export class WorldRenderer {
             makeIM(new THREE.TorusGeometry(4.0, 0.4, 6, 16),       matStadiumRing, 'stadiumRing', counts.stadium);
         }
         // ---- LOD geometry (one mesh part per type — minimal vertex count) ----
-        // Tree LOD: single green box — readable silhouette at distance, no trunk detail
+        // Tree LOD: billboard sprite — a camera-facing plane (2 triangles) with a
+        // procedural tree-shaped texture. The vertex shader rotates each instance to
+        // face the camera, so no per-frame JS matrix updates are needed.
         if (counts.tree > 0) {
-            makeIM(new THREE.BoxGeometry(1.0, 2.0, 1.0), matTreeLOD, 'treeLOD', counts.tree, 'tree');
+            const billboardGeo = new THREE.PlaneGeometry(2.0, 2.5);
+            const billboardMat = this._createTreeBillboardMaterial();
+            const im = new THREE.InstancedMesh(billboardGeo, billboardMat, counts.tree);
+            im.castShadow    = false;
+            im.receiveShadow = false;
+            im.frustumCulled = false;
+
+            // Apply per-instance colours from the tree palette
+            const palette = TYPE_COLORS['tree'];
+            if (palette) {
+                const c = new THREE.Color();
+                for (let i = 0; i < counts.tree; i++) {
+                    c.setHex(palette[Math.floor(Math.random() * palette.length)]);
+                    im.setColorAt(i, c);
+                }
+                if (im.instanceColor) im.instanceColor.needsUpdate = true;
+            }
+
+            this.group.add(im);
+            if (!this.instancedMeshes['treeLOD']) this.instancedMeshes['treeLOD'] = [];
+            this.instancedMeshes['treeLOD'].push(im);
         }
         // Barn LOD: single box
         if (counts.barn > 0) {
@@ -846,6 +891,115 @@ export class WorldRenderer {
     }
 
     // ============================================================
+    // Billboard material for tree LOD — GPU-side camera-facing
+    // ============================================================
+
+    /**
+     * Creates a ShaderMaterial that:
+     * 1. Rotates each instanced plane to face the camera (cylindrical billboard —
+     *    rotates around Y axis only, so trees stay upright).
+     * 2. Draws a procedural tree silhouette: brown trunk rectangle at bottom,
+     *    green circle canopy on top, with soft alpha edges.
+     * 3. Supports per-instance colour from instanceColor buffer.
+     */
+    private _createTreeBillboardMaterial(): THREE.ShaderMaterial {
+        return new THREE.ShaderMaterial({
+            uniforms: {
+                uCameraPos: this._billboardCamPos,
+            },
+            vertexShader: /* glsl */ `
+                uniform vec3 uCameraPos;
+                varying vec2 vUv;
+                varying vec3 vInstanceColor;
+
+                void main() {
+                    vUv = uv;
+
+                    // Read per-instance colour (falls back to white if no instanceColor)
+                    #ifdef USE_INSTANCING_COLOR
+                        vInstanceColor = instanceColor;
+                    #else
+                        vInstanceColor = vec3(1.0);
+                    #endif
+
+                    // Extract instance position from the instance matrix (column 3)
+                    vec3 instancePos = vec3(
+                        instanceMatrix[3][0],
+                        instanceMatrix[3][1],
+                        instanceMatrix[3][2]
+                    );
+
+                    // Extract instance scale from the instance matrix columns
+                    float scaleX = length(vec3(instanceMatrix[0][0], instanceMatrix[0][1], instanceMatrix[0][2]));
+                    float scaleY = length(vec3(instanceMatrix[1][0], instanceMatrix[1][1], instanceMatrix[1][2]));
+
+                    // Cylindrical billboard: rotate around Y to face camera
+                    vec3 toCamera = uCameraPos - instancePos;
+                    toCamera.y = 0.0; // keep upright
+                    float len = length(toCamera);
+                    if (len > 0.001) toCamera /= len;
+
+                    // right = cross(up, toCamera)
+                    vec3 up = vec3(0.0, 1.0, 0.0);
+                    vec3 right = cross(up, toCamera);
+
+                    // Build billboard vertex position
+                    vec3 worldPos = instancePos
+                        + right * position.x * scaleX
+                        + up    * position.y * scaleY;
+
+                    gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
+                }
+            `,
+            fragmentShader: /* glsl */ `
+                varying vec2 vUv;
+                varying vec3 vInstanceColor;
+
+                void main() {
+                    // UV: (0,0) bottom-left to (1,1) top-right
+                    // Tree shape: trunk at bottom (uv.y < 0.3), canopy circle on top
+
+                    float alpha = 0.0;
+                    vec3 color = vec3(0.0);
+
+                    // --- Trunk: narrow rectangle at bottom-centre ---
+                    float trunkWidth = 0.15;
+                    float trunkTop   = 0.35;
+                    if (vUv.y < trunkTop && abs(vUv.x - 0.5) < trunkWidth) {
+                        color = vec3(0.36, 0.25, 0.20); // brown
+                        alpha = 1.0;
+                        // Soften edges
+                        float edgeDist = trunkWidth - abs(vUv.x - 0.5);
+                        alpha *= smoothstep(0.0, 0.03, edgeDist);
+                        alpha *= smoothstep(0.0, 0.05, vUv.y); // fade at very bottom
+                    }
+
+                    // --- Canopy: circle centred at (0.5, 0.65) ---
+                    vec2 canopyCentre = vec2(0.5, 0.62);
+                    float canopyRadius = 0.38;
+                    float dist = length(vUv - canopyCentre);
+                    if (dist < canopyRadius) {
+                        float canopyAlpha = smoothstep(canopyRadius, canopyRadius - 0.06, dist);
+                        // Darken edges for depth cue
+                        float shade = 0.7 + 0.3 * (1.0 - dist / canopyRadius);
+                        vec3 foliageColor = vInstanceColor * shade;
+                        // Blend canopy over trunk
+                        color = mix(color, foliageColor, canopyAlpha);
+                        alpha = max(alpha, canopyAlpha);
+                    }
+
+                    if (alpha < 0.05) discard;
+
+                    gl_FragColor = vec4(color, alpha);
+                }
+            `,
+            transparent: true,
+            depthWrite: true,
+            side: THREE.DoubleSide,
+        });
+    }
+
+    // ============================================================
     // LOD instance matrix setup — simplified single-part geometry
     // Positions match the detail version so swapping is seamless
     // ============================================================
@@ -865,6 +1019,8 @@ export class WorldRenderer {
             this.dummy.updateMatrix();
             im.setMatrixAt(lodIdx, this.dummy.matrix);
             im.instanceMatrix.needsUpdate = true;
+            // Cache original matrix for _showLodSlot restoration
+            this._originalLodMatrices.set(`tree:${lodIdx}`, this.dummy.matrix.clone());
         }
 
         if (obj.type === 'barn') {
@@ -876,6 +1032,7 @@ export class WorldRenderer {
             this.dummy.updateMatrix();
             im.setMatrixAt(lodIdx, this.dummy.matrix);
             im.instanceMatrix.needsUpdate = true;
+            this._originalLodMatrices.set(`barn:${lodIdx}`, this.dummy.matrix.clone());
         }
 
         if (obj.type === 'car') {
@@ -887,6 +1044,7 @@ export class WorldRenderer {
             this.dummy.updateMatrix();
             im.setMatrixAt(lodIdx, this.dummy.matrix);
             im.instanceMatrix.needsUpdate = true;
+            this._originalLodMatrices.set(`car:${lodIdx}`, this.dummy.matrix.clone());
         }
 
         if (obj.type === 'animal') {
@@ -898,6 +1056,7 @@ export class WorldRenderer {
             this.dummy.updateMatrix();
             im.setMatrixAt(lodIdx, this.dummy.matrix);
             im.instanceMatrix.needsUpdate = true;
+            this._originalLodMatrices.set(`animal:${lodIdx}`, this.dummy.matrix.clone());
         }
 
         if (obj.type === 'trailer_park') {
@@ -909,6 +1068,7 @@ export class WorldRenderer {
             this.dummy.updateMatrix();
             im.setMatrixAt(lodIdx, this.dummy.matrix);
             im.instanceMatrix.needsUpdate = true;
+            this._originalLodMatrices.set(`trailer_park:${lodIdx}`, this.dummy.matrix.clone());
         }
 
         if (obj.type === 'stadium') {
@@ -920,6 +1080,7 @@ export class WorldRenderer {
             this.dummy.updateMatrix();
             im.setMatrixAt(lodIdx, this.dummy.matrix);
             im.instanceMatrix.needsUpdate = true;
+            this._originalLodMatrices.set(`stadium:${lodIdx}`, this.dummy.matrix.clone());
         }
 
     }
@@ -967,6 +1128,10 @@ export class WorldRenderer {
 
     public updateLOD(camera: THREE.Camera): void {
         this._lodFrame++;
+
+        // Update billboard camera uniform every frame (cheap — just a vec3 copy)
+        this._billboardCamPos.value.copy(camera.position);
+
         if (this._lodFrame % LOD_UPDATE_INTERVAL !== 0) return;
 
         // Rebuild frustum from current camera matrices
@@ -994,10 +1159,15 @@ export class WorldRenderer {
                 const dz   = pos.y - camPos.z; // pos.y stores world Z
                 const dist = Math.sqrt(dx * dx + dz * dz);
 
+                // Trees use aggressive LOD thresholds (80/200) to cut triangle count
+                const isTree  = entry.type === 'tree';
+                const lodNear = isTree ? this._treeLodNearDistance : this._lodNearDistance;
+                const lodFar  = isTree ? this._treeLodFarDistance  : this._lodFarDistance;
+
                 let target: LodLevel;
-                if (!chunkInFrustum || dist > this._lodFarDistance) {
+                if (!chunkInFrustum || dist > lodFar) {
                     target = 'hidden';
-                } else if (dist > this._lodNearDistance) {
+                } else if (dist > lodNear) {
                     target = 'lod';
                 } else {
                     target = 'detail';
@@ -1063,20 +1233,27 @@ export class WorldRenderer {
         }
     }
 
-    /** Restore LOD mesh parts to the scale baked in by setLodInstanceData */
+    /** Restore LOD mesh parts to the matrix baked in by setLodInstanceData */
     private _showLodSlot(type: string, lodIndex: number): void {
         const keys = LOD_KEYS[type] ?? [];
+        // Use the cached original matrix (avoids reading back the 0.0001-scale hidden matrix)
+        const cacheKey = `${type}:${lodIndex}`;
+        const originalMatrix = this._originalLodMatrices.get(cacheKey);
         for (const key of keys) {
             const im = this.instancedMeshes[key]?.[0];
             if (!im) continue;
-            im.getMatrixAt(lodIndex, this._mat4);
-            this._mat4.decompose(this._pos, this._quat, this._scale);
-            this.dummy.position.copy(this._pos);
-            this.dummy.quaternion.copy(this._quat);
-            // _scale contains the original scale written by setLodInstanceData
-            this.dummy.scale.copy(this._scale);
-            this.dummy.updateMatrix();
-            im.setMatrixAt(lodIndex, this.dummy.matrix);
+            if (originalMatrix) {
+                im.setMatrixAt(lodIndex, originalMatrix);
+            } else {
+                // Fallback: read from current matrix (may be stale if hidden)
+                im.getMatrixAt(lodIndex, this._mat4);
+                this._mat4.decompose(this._pos, this._quat, this._scale);
+                this.dummy.position.copy(this._pos);
+                this.dummy.quaternion.copy(this._quat);
+                this.dummy.scale.copy(this._scale);
+                this.dummy.updateMatrix();
+                im.setMatrixAt(lodIndex, this.dummy.matrix);
+            }
             im.instanceMatrix.needsUpdate = true;
         }
     }
@@ -1548,6 +1725,7 @@ export class WorldRenderer {
         this.objectInstances.clear();
         this.objectLodLevel.clear();
         this.objectLodIndex.clear();
+        this._originalLodMatrices.clear();
         this.chunks.clear();
     }
 }

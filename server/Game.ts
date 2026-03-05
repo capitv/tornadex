@@ -396,7 +396,7 @@ export class Game {
                 }
             }
 
-            player.update(dt, speedMult);
+            player.update(dt, speedMult, now);
 
             // ---- Power-up collection ----
             for (const pu of this.world.powerUps) {
@@ -466,6 +466,21 @@ export class Game {
                 const a = playerArray[i];
                 const b = playerArray[j];
 
+                // ---- Lag-compensated distance check for PvP absorption ----
+                // For each player acting as the attacker, compute where the
+                // *victim* was at the time the attacker's input was generated
+                // (now - attacker.rtt / 2). This makes what the attacker saw
+                // on their screen match what the server checks.
+                // Clamp rewind to 200ms max to prevent abuse.
+                const aRewind = Math.min(a.rtt * 0.5, 200);
+                const bRewind = Math.min(b.rtt * 0.5, 200);
+
+                // B's position as seen by A (rewound by A's half-RTT)
+                const bForA = aRewind > 0 ? b.getPositionAt(now - aRewind) : b;
+                // A's position as seen by B (rewound by B's half-RTT)
+                const aForB = bRewind > 0 ? a.getPositionAt(now - bRewind) : a;
+
+                // Current-position distance check for proximity (repulsion, suction range)
                 const dist = a.distanceTo(b);
                 const touchDist = a.radius + b.radius;
 
@@ -493,41 +508,55 @@ export class Game {
                         ? a.radius / b.radius
                         : b.radius / a.radius;
 
-                    // Absorption fires when canAbsorb() returns true (>= 1.2× size ratio)
+                    // Absorption fires when canAbsorb() returns true (>= 1.1× size ratio)
                     // AND the victim is unprotected.
                     // Below that threshold the tornados repel each other instead,
                     // creating tension and bouncing between equal-sized players.
                     const REPULSE_RATIO = 1.5;
 
+                    // Lag-compensated absorption: use the victim's rewound position
+                    // for the distance check, so the attacker's view is authoritative.
                     if (a.canAbsorb(b) && !bProtected) {
-                        // A absorbs B — clearly larger (>= 1.2×) and B is unprotected
-                        pendingKills.push({ killer: a.name, victim: b.name, killerRadius: a.radius });
-                        a.grow(b.score * 0.3, b.radius * 0.12);
-                        b.alive = false;
-                        this.absorbedThisTick.add(b.id);
-                        this.objectsDestroyedByPlayer.set(a.id, true);
-                        this.submitToLeaderboard(b);
-                        // Let the bot manager handle respawn scheduling for bots
-                        this.botManager.notifyBotDied(b.id);
-                        if (this.onPlayerDeath) {
-                            this.onPlayerDeath(b.id, a.name);
+                        // A is attacker — check distance to B's lag-compensated position
+                        const dxLC = a.x - bForA.x;
+                        const dyLC = a.y - bForA.y;
+                        const distLC = Math.sqrt(dxLC * dxLC + dyLC * dyLC);
+                        const touchDistLC = a.radius + bForA.radius;
+                        if (distLC < touchDistLC * absorbMult) {
+                            // A absorbs B — clearly larger (>= 1.1×) and B is unprotected
+                            pendingKills.push({ killer: a.name, victim: b.name, killerRadius: a.radius });
+                            a.grow(b.score * 0.3, b.radius * 0.12);
+                            b.alive = false;
+                            this.absorbedThisTick.add(b.id);
+                            this.objectsDestroyedByPlayer.set(a.id, true);
+                            this.submitToLeaderboard(b);
+                            this.botManager.notifyBotDied(b.id);
+                            if (this.onPlayerDeath) {
+                                this.onPlayerDeath(b.id, a.name);
+                            }
                         }
                     } else if (b.canAbsorb(a) && !aProtected) {
-                        // B absorbs A — clearly larger (>= 1.2×) and A is unprotected
-                        pendingKills.push({ killer: b.name, victim: a.name, killerRadius: b.radius });
-                        b.grow(a.score * 0.3, a.radius * 0.12);
-                        a.alive = false;
-                        this.absorbedThisTick.add(a.id);
-                        this.objectsDestroyedByPlayer.set(b.id, true);
-                        this.submitToLeaderboard(a);
-                        // Let the bot manager handle respawn scheduling for bots
-                        this.botManager.notifyBotDied(a.id);
-                        if (this.onPlayerDeath) {
-                            this.onPlayerDeath(a.id, b.name);
+                        // B is attacker — check distance to A's lag-compensated position
+                        const dxLC = b.x - aForB.x;
+                        const dyLC = b.y - aForB.y;
+                        const distLC = Math.sqrt(dxLC * dxLC + dyLC * dyLC);
+                        const touchDistLC = b.radius + aForB.radius;
+                        if (distLC < touchDistLC * absorbMult) {
+                            // B absorbs A — clearly larger (>= 1.1×) and A is unprotected
+                            pendingKills.push({ killer: b.name, victim: a.name, killerRadius: b.radius });
+                            b.grow(a.score * 0.3, a.radius * 0.12);
+                            a.alive = false;
+                            this.absorbedThisTick.add(a.id);
+                            this.objectsDestroyedByPlayer.set(b.id, true);
+                            this.submitToLeaderboard(a);
+                            this.botManager.notifyBotDied(a.id);
+                            if (this.onPlayerDeath) {
+                                this.onPlayerDeath(a.id, b.name);
+                            }
                         }
                     } else {
-                        // Similar-sized tornados (ratio < 1.2×) OR a player is protected.
-                        // Apply size-aware repulsion:
+                        // Similar-sized tornados (ratio < 1.1×) OR a player is protected.
+                        // Apply size-aware repulsion (no lag compensation needed for repulsion):
                         //   pushStrength = 0.3 * (1 - sizeRatio / REPULSE_RATIO)
                         //   → ~0.3 when sizes are equal (ratio = 1.0)
                         //   → ~0.08 when ratio approaches 1.2 (near-absorption threshold)

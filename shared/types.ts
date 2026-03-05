@@ -171,6 +171,8 @@ export interface ServerToClientEvents {
     'game:death': (data: { killerName: string }) => void;
     'game:joined': (data: { id: string; worldSize: number; seed: number; zones: TerrainZone[]; safeZones: SafeZone[]; objects: WorldObject[] }) => void;
     'ping:reply': (data: { clientTime: number }) => void;
+    /** Server-initiated RTT probe — client must echo the timestamp back. */
+    'server:rtt_ping': (data: { t: number }) => void;
     /** Emitted to all clients before the server shuts down. countdownMs = ms until disconnect. */
     'server:shutdown': (data: { countdownMs: number; reason: string }) => void;
     /** Emitted to a player when they exceed rate limits. */
@@ -182,6 +184,8 @@ export interface ClientToServerEvents {
     'player:input': (input: InputPayload) => void;
     'player:respawn': () => void;
     'ping:check': (data: { clientTime: number }) => void;
+    /** Response to server-initiated RTT probe. */
+    'server:rtt_pong': (data: { t: number }) => void;
 }
 
 // ---- Health / Metrics ----

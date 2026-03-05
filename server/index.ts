@@ -167,8 +167,31 @@ io.on('connection', (socket) => {
         socket.emit('ping:reply', { clientTime: data.clientTime });
     });
 
+    // ---- Server-initiated RTT measurement for lag compensation ----
+    // Send a ping every 2 seconds; client echoes it back immediately.
+    // RTT is stored on the Player object for use in lag-compensated collisions.
+    const rttInterval = setInterval(() => {
+        socket.emit('server:rtt_ping', { t: Date.now() });
+    }, 2000);
+
+    socket.on('server:rtt_pong', (data) => {
+        if (typeof data?.t !== 'number') return;
+        const rtt = Date.now() - data.t;
+        if (rtt < 0 || rtt > 5000) return; // sanity check
+        // Update RTT on the player object (find across all rooms)
+        const entry = roomManager.getRoomForSocket(socket.id);
+        if (entry) {
+            const player = entry.game.players.get(socket.id);
+            if (player) {
+                // Exponential moving average for smoothness (alpha = 0.3)
+                player.rtt = player.rtt === 0 ? rtt : player.rtt * 0.7 + rtt * 0.3;
+            }
+        }
+    });
+
     socket.on('disconnect', () => {
         serverLogger.info(`Client disconnected: ${socket.id}`);
+        clearInterval(rttInterval);
         roomManager.leaveRoom(socket.id);
         rateMap.delete(socket.id);
     });

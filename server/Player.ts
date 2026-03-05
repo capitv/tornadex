@@ -11,6 +11,17 @@ import {
     SPAWN_PROTECTION_MS,
 } from './constants.js';
 
+// ---- Position history for lag compensation ----
+interface PositionSnapshot {
+    x: number;
+    y: number;
+    radius: number;
+    timestamp: number; // Date.now() epoch ms
+}
+
+/** Number of position snapshots to keep (~500ms at 20Hz = 10 entries, keep 12 for safety). */
+const POSITION_HISTORY_SIZE = 12;
+
 export class Player {
     id: string;
     name: string;
@@ -32,6 +43,14 @@ export class Player {
     /** Epoch ms timestamp after which spawn protection expires (0 = no protection). */
     spawnProtectedUntil: number = 0;
 
+    /** Round-trip time in ms, updated by server-side ping/pong. Used for lag compensation. */
+    rtt: number = 0;
+
+    // ---- Position history ring buffer (lag compensation) ----
+    private posHistory: PositionSnapshot[] = new Array(POSITION_HISTORY_SIZE);
+    private posHistoryHead: number = 0;   // next write index
+    private posHistoryCount: number = 0;  // how many entries are populated
+
     private input: InputPayload = { angle: 0, active: false, boost: false, seq: 0 };
     private idleTicks: number = 0;
     /** Cooldown ticks remaining after stamina hits 0 — prevents E-spam micro-boosts. */
@@ -51,6 +70,11 @@ export class Player {
 
         // Grant spawn protection immediately on creation
         this.spawnProtectedUntil = Date.now() + SPAWN_PROTECTION_MS;
+
+        // Pre-allocate ring buffer slots
+        for (let i = 0; i < POSITION_HISTORY_SIZE; i++) {
+            this.posHistory[i] = { x: 0, y: 0, radius: 0, timestamp: 0 };
+        }
     }
 
     /** Returns true when spawn invulnerability is still active. */
@@ -76,7 +100,7 @@ export class Player {
         return expiry !== undefined && this.tickCount < expiry;
     }
 
-    update(dt: number, speedMultiplier: number = 1): void {
+    update(dt: number, speedMultiplier: number = 1, now: number = Date.now()): void {
         if (!this.alive) return;
 
         this.tickCount++;
@@ -169,6 +193,76 @@ export class Player {
         // Clamp to world bounds
         this.x = Math.max(this.radius, Math.min(WORLD_SIZE - this.radius, this.x));
         this.y = Math.max(this.radius, Math.min(WORLD_SIZE - this.radius, this.y));
+
+        // Record position in history ring buffer for lag compensation
+        this.recordPosition(now);
+    }
+
+    // ---- Position history (lag compensation) ----
+
+    /** Push the current position into the ring buffer. */
+    private recordPosition(now: number): void {
+        const slot = this.posHistory[this.posHistoryHead];
+        slot.x = this.x;
+        slot.y = this.y;
+        slot.radius = this.radius;
+        slot.timestamp = now;
+        this.posHistoryHead = (this.posHistoryHead + 1) % POSITION_HISTORY_SIZE;
+        if (this.posHistoryCount < POSITION_HISTORY_SIZE) this.posHistoryCount++;
+    }
+
+    /**
+     * Retrieve interpolated position at a past timestamp.
+     * Returns current position if timestamp is newer than newest entry
+     * or if no history is available.
+     */
+    getPositionAt(timestamp: number): { x: number; y: number; radius: number } {
+        if (this.posHistoryCount === 0) {
+            return { x: this.x, y: this.y, radius: this.radius };
+        }
+
+        // Read entries from oldest to newest
+        const start = this.posHistoryCount < POSITION_HISTORY_SIZE
+            ? 0
+            : this.posHistoryHead; // oldest entry
+        const count = this.posHistoryCount;
+
+        // Get oldest and newest for bounds checking
+        const oldestIdx = start % POSITION_HISTORY_SIZE;
+        const newestIdx = (start + count - 1) % POSITION_HISTORY_SIZE;
+        const oldest = this.posHistory[oldestIdx];
+        const newest = this.posHistory[newestIdx];
+
+        // Clamp: if requested time is before our oldest record, use oldest
+        if (timestamp <= oldest.timestamp) {
+            return { x: oldest.x, y: oldest.y, radius: oldest.radius };
+        }
+        // If requested time is at or after newest, use current position
+        if (timestamp >= newest.timestamp) {
+            return { x: this.x, y: this.y, radius: this.radius };
+        }
+
+        // Find the two entries that bracket the requested timestamp and interpolate
+        for (let i = 0; i < count - 1; i++) {
+            const aIdx = (start + i) % POSITION_HISTORY_SIZE;
+            const bIdx = (start + i + 1) % POSITION_HISTORY_SIZE;
+            const a = this.posHistory[aIdx];
+            const b = this.posHistory[bIdx];
+
+            if (timestamp >= a.timestamp && timestamp <= b.timestamp) {
+                const span = b.timestamp - a.timestamp;
+                if (span === 0) return { x: b.x, y: b.y, radius: b.radius };
+                const t = (timestamp - a.timestamp) / span;
+                return {
+                    x: a.x + (b.x - a.x) * t,
+                    y: a.y + (b.y - a.y) * t,
+                    radius: a.radius + (b.radius - a.radius) * t,
+                };
+            }
+        }
+
+        // Fallback (should not reach here)
+        return { x: this.x, y: this.y, radius: this.radius };
     }
 
     grow(points: number, radiusGrowth: number): void {
@@ -210,6 +304,9 @@ export class Player {
         this.boostCooldown = 0;
         // Re-grant spawn protection on respawn
         this.spawnProtectedUntil = Date.now() + SPAWN_PROTECTION_MS;
+        // Clear position history so lag compensation doesn't use pre-death positions
+        this.posHistoryCount = 0;
+        this.posHistoryHead = 0;
     }
 
     toState(now?: number): PlayerState {

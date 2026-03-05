@@ -278,6 +278,10 @@ let displayPos: PredictedState | null = null;
  *  in the render-loop extrapolation so it matches the server physics. */
 let localPlayerRadius: number = 1;
 
+/** Whether the local player has a speed power-up active — cached from latest
+ *  server state so render-loop extrapolation matches server physics. */
+let localHasSpeedPowerUp: boolean = false;
+
 /**
  * Base move speed that mirrors the server constant (PLAYER_SPEED = 1.0 units/tick).
  * Server tick = 50 ms, so 1.0 / 50 = 0.02 units/ms.
@@ -287,6 +291,8 @@ const BASE_SPEED_PER_MS = 1.0 / 50; // 0.02 units/ms
 const BOOST_MULTIPLIER  = 1.8;
 /** Size-based slowdown factor — mirrors server SPEED_SIZE_FACTOR (0.015). */
 const SPEED_SIZE_FACTOR = 0.015;
+/** Power-up speed boost multiplier — mirrors server SPEED_BOOST_MULTIPLIER (1.5). */
+const POWERUP_SPEED_MULTIPLIER = 1.5;
 
 // ---- Seed URL handling ----
 // On page load, read ?seed= from the URL and pre-fill the seed input.
@@ -402,6 +408,7 @@ function startGame(): void {
     displayPos = null;
 
     localPlayerRadius = 1;
+    localHasSpeedPowerUp = false;
     pendingInputs.length = 0; // fresh session — clear any stale inputs
     inputSeq = 0;
     resetRunStats();
@@ -455,6 +462,7 @@ function respawnGame(): void {
     displayPos = null;
 
     localPlayerRadius = 1;
+    localHasSpeedPowerUp = false;
     pendingInputs.length = 0; // discard stale inputs from the previous life
     inputSeq = 0;
     resetRunStats();
@@ -528,19 +536,38 @@ network.onState((state: GameState) => {
         // with a fixed dt of 50 ms per input rather than using wall-clock age
         // (which would compound movement incorrectly across multiple inputs).
         //
-        // The speed calculation now mirrors the server: it applies the
-        // SPEED_SIZE_FACTOR radius-based slowdown and clamps to 30% minimum,
-        // so the client prediction stays in sync with the server physics.
+        // The speed calculation mirrors the server: it applies the
+        // SPEED_SIZE_FACTOR radius-based slowdown, clamps to 30% minimum,
+        // and accounts for the "speed" power-up multiplier (1.5x).
         localPlayerRadius = localState.radius;
+        // Check if the local player has a speed power-up active
+        const hasSpeedPowerUp = Array.isArray(localState.activeEffects) &&
+            localState.activeEffects.some((e: { type: string }) => e.type === 'speed');
+        localHasSpeedPowerUp = hasSpeedPowerUp;
+        const powerUpSpeedMult = hasSpeedPowerUp ? POWERUP_SPEED_MULTIPLIER : 1.0;
         if (localState.alive && pendingInputs.length > 0) {
+            // Start from the server-confirmed position, then use server velocity
+            // to extrapolate forward by half the pending input window. This
+            // accounts for any server-side forces (suction, collisions) that
+            // the client can't replicate, reducing baseline prediction error.
             let rx = localState.x;
             let ry = localState.y;
+
+            // Velocity-aware base: apply server velocity for the time gap
+            // between the server state and the oldest pending input.
+            // velocityX/Y are in units/tick (50ms). We extrapolate for
+            // half the pending window to split the difference between
+            // "server was here" and "server will be here after processing".
+            const halfPendingTicks = pendingInputs.length * 0.5;
+            rx += localState.velocityX * halfPendingTicks;
+            ry += localState.velocityY * halfPendingTicks;
+
             const INPUT_TICK_MS = 50; // matches the sendInput setInterval
             for (const inp of pendingInputs) {
                 if (!inp.active) continue;
                 const boostMult = inp.boost ? BOOST_MULTIPLIER : 1.0;
-                const rawSpeed = BASE_SPEED_PER_MS * (1 - localState.radius * SPEED_SIZE_FACTOR) * boostMult;
-                const minSpeed = BASE_SPEED_PER_MS * 0.3 * boostMult;
+                const rawSpeed = BASE_SPEED_PER_MS * (1 - localState.radius * SPEED_SIZE_FACTOR) * boostMult * powerUpSpeedMult;
+                const minSpeed = BASE_SPEED_PER_MS * 0.3 * boostMult * powerUpSpeedMult;
                 const speed = Math.max(rawSpeed, minSpeed) * INPUT_TICK_MS;
                 rx += Math.cos(inp.angle) * speed;
                 ry += Math.sin(inp.angle) * speed;
@@ -551,8 +578,13 @@ network.onState((state: GameState) => {
             ry = Math.max(r, Math.min(worldSize - r, ry));
             predictedLocal = { x: rx, y: ry };
         } else if (localState.alive) {
-            // No pending inputs — snap prediction to server position
-            predictedLocal = { x: localState.x, y: localState.y };
+            // No pending inputs — use server position with a small velocity
+            // extrapolation to stay ahead of latency
+            const vExtraTicks = 0.5; // half a tick of velocity to reduce lag feel
+            predictedLocal = {
+                x: localState.x + localState.velocityX * vExtraTicks,
+                y: localState.y + localState.velocityY * vExtraTicks,
+            };
         } else {
             predictedLocal = null;
         }
@@ -730,25 +762,41 @@ function animate(time: number): void {
         //    with what the server will process (prevents extrapolation divergence).
         if (lastSentInput.active) {
             const boostMult = lastSentInput.boost ? BOOST_MULTIPLIER : 1.0;
-            const rawSpeed = BASE_SPEED_PER_MS * (1 - localPlayerRadius * SPEED_SIZE_FACTOR) * boostMult;
-            const minSpeed = BASE_SPEED_PER_MS * 0.3 * boostMult;
+            const puSpeedMult = localHasSpeedPowerUp ? POWERUP_SPEED_MULTIPLIER : 1.0;
+            const rawSpeed = BASE_SPEED_PER_MS * (1 - localPlayerRadius * SPEED_SIZE_FACTOR) * boostMult * puSpeedMult;
+            const minSpeed = BASE_SPEED_PER_MS * 0.3 * boostMult * puSpeedMult;
             const speed = Math.max(rawSpeed, minSpeed);
             displayPos.x += Math.cos(lastSentInput.angle) * speed * dt;
             displayPos.y += Math.sin(lastSentInput.angle) * speed * dt;
         }
 
-        // 2. Smooth correction toward reconciled prediction
-        // At 60fps (dt≈16.7ms), corrFactor ≈ 0.18 → ~45% corrected per tick (50ms).
-        // Gentle enough to avoid oscillation while still converging within ~150ms.
+        // 2. Adaptive correction toward reconciled prediction
+        // Uses tiered lerp rates based on error magnitude:
+        //   - Small  (< 1 unit):  very gentle (0.003/ms) — prevents micro-jitter
+        //   - Medium (1–5 units): moderate    (0.012/ms) — smooth convergence
+        //   - Large  (> 5 units): aggressive  (0.04/ms)  — fast catch-up
+        //   - Huge   (> 10 units): snap immediately
         const errX = predictedLocal.x - displayPos.x;
         const errY = predictedLocal.y - displayPos.y;
-        const errDist = errX * errX + errY * errY;
-        if (errDist > 100) {
+        const errDistSq = errX * errX + errY * errY;
+        if (errDistSq > 100) {
             // Very large error (>10 units): snap immediately
             displayPos.x = predictedLocal.x;
             displayPos.y = predictedLocal.y;
-        } else if (errDist > 0.0001) {
-            const corrFactor = 1 - Math.exp(-dt * 0.012);
+        } else if (errDistSq > 0.0001) {
+            // Pick rate constant based on error distance
+            let rate: number;
+            if (errDistSq < 1) {
+                // < 1 unit: very slow correction to avoid micro-jitter
+                rate = 0.003;
+            } else if (errDistSq < 25) {
+                // 1–5 units: moderate correction
+                rate = 0.012;
+            } else {
+                // 5–10 units: aggressive correction
+                rate = 0.04;
+            }
+            const corrFactor = 1 - Math.exp(-dt * rate);
             displayPos.x += errX * corrFactor;
             displayPos.y += errY * corrFactor;
         }
