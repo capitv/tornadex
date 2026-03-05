@@ -747,9 +747,16 @@ export class WorldRenderer {
             this.lodTypeCounters[obj.type] = lodIdx + 1;
             this.objectLodIndex.set(obj.id, lodIdx);
             this.setLodInstanceData(obj, lodIdx);
-            // LOD mesh starts hidden — detail is active by default
-            this._hideLodSlot(obj.type, lodIdx);
-            this.objectLodLevel.set(obj.id, 'detail');
+            // Trees use billboard always (no 3D detail tier) for massive triangle savings.
+            // Other types start with detail visible and LOD hidden.
+            if (obj.type === 'tree') {
+                // Show billboard, hide detail geometry
+                this._hideDetailSlot(obj.type, idx);
+                this.objectLodLevel.set(obj.id, 'lod');
+            } else {
+                this._hideLodSlot(obj.type, lodIdx);
+                this.objectLodLevel.set(obj.id, 'detail');
+            }
         }
 
         // Build spatial chunks for frustum culling
@@ -1158,35 +1165,33 @@ export class WorldRenderer {
                 const dz   = pos.y - camPos.z; // pos.y stores world Z
                 const dist = Math.sqrt(dx * dx + dz * dz);
 
-                // Trees use aggressive LOD thresholds (80/200) to cut triangle count
                 const isTree  = entry.type === 'tree';
-                const lodNear = isTree ? this._treeLodNearDistance : this._lodNearDistance;
-                const lodFar  = isTree ? this._treeLodFarDistance  : this._lodFarDistance;
-
                 const current = this.objectLodLevel.get(entry.objId) ?? 'detail';
 
-                // Hysteresis: use tighter thresholds to switch back to a
-                // higher-detail level, preventing rapid toggling (flicker)
-                // at LOD boundaries.  Objects must move 10% closer than
-                // the boundary before upgrading, but degrade immediately.
-                const hysteresis = isTree ? 8 : 15;
                 let target: LodLevel;
-                if (!chunkInFrustum || dist > lodFar) {
-                    target = 'hidden';
-                } else if (dist > lodNear) {
-                    // Only downgrade to lod; if already lod, require moving
-                    // closer than (lodNear - hysteresis) to upgrade back.
-                    target = current === 'detail' ? 'lod' : (dist < lodNear - hysteresis ? 'detail' : 'lod');
-                } else if (current === 'lod' && dist > lodNear - hysteresis) {
-                    // In the hysteresis band — stay at current level
-                    target = 'lod';
-                } else {
-                    target = 'detail';
-                }
 
-                // Also apply hysteresis for hidden→lod transition
-                if (current === 'hidden' && target === 'lod' && dist > lodFar - hysteresis) {
-                    target = 'hidden';
+                if (isTree) {
+                    // Trees ALWAYS use billboard — never 3D detail geometry.
+                    // Only decision: billboard ('lod') vs culled ('hidden').
+                    target = (!chunkInFrustum || dist > this._treeLodFarDistance) ? 'hidden' : 'lod';
+                } else {
+                    const lodNear = this._lodNearDistance;
+                    const lodFar  = this._lodFarDistance;
+                    const hysteresis = 15;
+
+                    if (!chunkInFrustum || dist > lodFar) {
+                        target = 'hidden';
+                    } else if (dist > lodNear) {
+                        target = current === 'detail' ? 'lod' : (dist < lodNear - hysteresis ? 'detail' : 'lod');
+                    } else if (current === 'lod' && dist > lodNear - hysteresis) {
+                        target = 'lod';
+                    } else {
+                        target = 'detail';
+                    }
+
+                    if (current === 'hidden' && target === 'lod' && dist > lodFar - hysteresis) {
+                        target = 'hidden';
+                    }
                 }
 
                 if (current === target) continue; // no state change, skip
@@ -1691,8 +1696,15 @@ export class WorldRenderer {
         if (!this.currentlyHidden.has(id)) return;
         const instance = this.objectInstances.get(id);
         if (instance) {
-            this.scaleInstance(instance.type, instance.index, 1);
-            this.objectLodLevel.set(id, 'detail');
+            if (instance.type === 'tree') {
+                // Trees always use billboard — restore LOD slot, not detail
+                const lodIdx = this.objectLodIndex.get(id) ?? 0;
+                this._showLodSlot(instance.type, lodIdx);
+                this.objectLodLevel.set(id, 'lod');
+            } else {
+                this.scaleInstance(instance.type, instance.index, 1);
+                this.objectLodLevel.set(id, 'detail');
+            }
         }
         this.currentlyHidden.delete(id);
     }
