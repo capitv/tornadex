@@ -35,6 +35,12 @@
   box-sizing: border-box;
 }
 
+/* ==== Accessibility: focus-visible styles for keyboard navigation ==== */
+*:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
 body {
   overflow: hidden;
   background: var(--bg-dark);
@@ -1843,4 +1849,199 @@ body {
   color: var(--text-secondary);
   font-size: 0.85rem;
   font-style: italic;
+}
+
+/* ============================================
+   Accessibility: prefers-reduced-motion
+   ============================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================
+   Mobile: touch target minimum sizes (44x44px)
+   ============================================ */
+@media (pointer: coarse) {
+  #play-btn,
+  #respawn-btn,
+  .leaderboard-menu-btn,
+  .lb-close,
+  .lb-tab,
+  .graphics-btn,
+  .skin-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* ============================================
+   Mobile: small screen (max-width: 480px)
+   ============================================ */
+@media (max-width: 480px) {
+  /* Reduce HUD element sizes */
+  #score-display {
+    padding: 6px 10px;
+    min-width: 70px;
+    top: 8px;
+    left: 8px;
+  }
+  .score-label {
+    font-size: 0.5rem;
+  }
+  #score-value {
+    font-size: 1.4rem;
+  }
+
+  #leaderboard {
+    width: 130px;
+    padding: 6px 8px;
+    top: 8px;
+    right: 8px;
+  }
+  #leaderboard h3 {
+    font-size: 0.52rem;
+    margin-bottom: 4px;
+  }
+  #leaderboard-list li {
+    font-size: 0.6rem;
+    padding: 2px 2px;
+  }
+
+  /* Kill feed: prevent overflow */
+  #kill-feed {
+    width: 180px;
+    top: 160px;
+    right: 8px;
+  }
+  .kill-entry {
+    font-size: 0.65rem;
+    padding: 4px 6px;
+  }
+
+  /* Boost bar: larger and more thumb-friendly */
+  #boost-display {
+    width: 120px;
+  }
+  #stamina-bar {
+    height: 12px;
+  }
+  #stamina-fill {
+    height: 100%;
+  }
+
+  /* Size display: compact */
+  #size-display {
+    padding: 4px 8px;
+    gap: 6px;
+  }
+  #category-name {
+    font-size: 0.85rem;
+  }
+  #size-bar-wrap {
+    width: 60px;
+  }
+
+  /* Chat: reduce width on very small screens */
+  #chat-container {
+    max-width: 220px;
+  }
+}
+
+/* ============================================
+   Chat System
+   ============================================ */
+#chat-container {
+  position: fixed;
+  bottom: 260px;
+  left: 24px;
+  max-width: 300px;
+  z-index: 55;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: hidden;
+  pointer-events: none;
+}
+
+.chat-msg {
+  padding: 3px 8px;
+  background: rgba(10, 10, 20, 0.7);
+  border-radius: 6px;
+  font-family: var(--font);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  opacity: 1;
+  transition: opacity 0.5s ease;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.chat-msg.faded {
+  opacity: 0;
+}
+
+.chat-msg .chat-name {
+  font-weight: 700;
+  color: var(--accent-secondary);
+  margin-right: 4px;
+}
+
+.chat-msg .chat-text {
+  font-weight: 400;
+  color: var(--text-primary);
+}
+
+#chat-input-wrap {
+  display: none;
+  pointer-events: auto;
+}
+
+#chat-input-wrap.active {
+  display: block;
+}
+
+#chat-input {
+  width: 100%;
+  max-width: 300px;
+  padding: 6px 10px;
+  background: rgba(10, 10, 20, 0.85);
+  border: 1px solid var(--border-glass-bright);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 12px;
+  outline: none;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+#chat-input::placeholder {
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+/* On coarse-pointer (touch) screens, shift chat above joystick */
+@media (pointer: coarse) {
+  #chat-container {
+    bottom: 300px;
+    left: 16px;
+    max-width: 260px;
+  }
 }

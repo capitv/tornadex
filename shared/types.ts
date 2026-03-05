@@ -177,6 +177,8 @@ export interface ServerToClientEvents {
     'server:shutdown': (data: { countdownMs: number; reason: string }) => void;
     /** Emitted to a player when they exceed rate limits. */
     'server:warning': (data: { message: string; warningCount: number }) => void;
+    /** Chat message broadcast to all players in the same room. */
+    'chat:message': (data: { name: string; msg: string; timestamp: number }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -186,6 +188,8 @@ export interface ClientToServerEvents {
     'ping:check': (data: { clientTime: number }) => void;
     /** Response to server-initiated RTT probe. */
     'server:rtt_pong': (data: { t: number }) => void;
+    /** Send a chat message to the room. */
+    'chat:send': (msg: string) => void;
 }
 
 // ---- Health / Metrics ----
