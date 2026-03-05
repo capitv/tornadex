@@ -596,10 +596,10 @@ body {
   pointer-events: none;
 }
 
-/* -- Boost / Stamina (above minimap) -- */
+/* -- Boost / Stamina (above ping, which sits above minimap) -- */
 #boost-display {
   position: absolute;
-  bottom: 196px;
+  bottom: 234px;
   left: 24px;
   display: flex;
   align-items: center;
