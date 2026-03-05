@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>Tornado.IO — Be the Biggest Storm</title>
   <meta name="description"
     content="Multiplayer IO game where you control a tornado. Destroy buildings, absorb rivals, become the ultimate storm!" />
@@ -45,7 +45,7 @@
   </div>
 
   <!-- Reconnecting Overlay (shown while Socket.IO attempts to reconnect) -->
-  <div id="reconnect-overlay" class="hidden">
+  <div id="reconnect-overlay" class="hidden" role="dialog" aria-modal="true" aria-label="Reconnecting">
     <div class="reconnect-box">
       <div class="reconnect-spinner"></div>
       <p class="reconnect-title">Reconnecting...</p>
@@ -62,8 +62,8 @@
       </h1>
       <p class="tagline">Destroy everything. Absorb everyone. Be the storm.</p>
       <div class="input-group">
-        <input type="text" id="player-name" placeholder="Your tornado name..." maxlength="16" autocomplete="off" />
-        <button id="play-btn">▶ PLAY</button>
+        <input type="text" id="player-name" placeholder="Your tornado name..." maxlength="16" autocomplete="off" aria-label="Player name" tabindex="1" />
+        <button id="play-btn" aria-label="Start game" tabindex="2">▶ PLAY</button>
       </div>
       <!-- Seed row: optional seed input + current seed display -->
       <div class="seed-row">
@@ -87,7 +87,7 @@
 
       <!-- Leaderboard button -->
       <div class="menu-leaderboard-row">
-        <button id="leaderboard-btn" class="leaderboard-menu-btn">
+        <button id="leaderboard-btn" class="leaderboard-menu-btn" aria-label="View leaderboard" tabindex="3">
           <span>🏆</span> ALL-TIME LEADERBOARD
         </button>
       </div>
@@ -106,7 +106,7 @@
   </div>
 
   <!-- Death Screen -->
-  <div id="death-screen" class="overlay hidden">
+  <div id="death-screen" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Death screen">
     <div class="death-container">
       <!-- Dramatic absorbed message -->
       <div class="death-header">
@@ -154,7 +154,7 @@
           <button class="lb-tab active" data-tab="alltime">ALL-TIME</button>
           <button class="lb-tab" data-tab="daily">TODAY</button>
         </div>
-        <button id="lb-close-btn" class="lb-close" aria-label="Close leaderboard">&times;</button>
+        <button id="lb-close-btn" class="lb-close" aria-label="Close">&times;</button>
       </div>
       <div id="lb-loading" class="lb-loading">Loading...</div>
       <div id="lb-error" class="lb-error hidden">Failed to load leaderboard.</div>

@@ -70,6 +70,54 @@ interface RateEntry {
 
 const rateMap = new Map<string, RateEntry>();
 
+// ============================================================
+// Chat Rate Limiting
+// ============================================================
+// Max 3 messages per 5 seconds per player (sliding window).
+
+interface ChatRateEntry {
+    timestamps: number[];
+}
+
+const chatRateMap = new Map<string, ChatRateEntry>();
+
+/**
+ * Returns true if the chat message should be allowed through.
+ * Enforces max 3 messages per 5-second window.
+ */
+function checkChatRate(socketId: string): boolean {
+    const now = Date.now();
+    let entry = chatRateMap.get(socketId);
+
+    if (!entry) {
+        entry = { timestamps: [] };
+        chatRateMap.set(socketId, entry);
+    }
+
+    // Remove timestamps older than 5 seconds
+    entry.timestamps = entry.timestamps.filter(t => now - t < 5000);
+
+    if (entry.timestamps.length >= 3) {
+        return false;
+    }
+
+    entry.timestamps.push(now);
+    return true;
+}
+
+/**
+ * Sanitize a chat message: strip HTML tags, trim whitespace, max 100 chars.
+ * Returns null if the message is empty after sanitization.
+ */
+function sanitizeChatMessage(msg: unknown): string | null {
+    if (typeof msg !== 'string') return null;
+    // Strip HTML tags
+    const stripped = msg.replace(/<[^>]*>/g, '');
+    // Trim and cap at 100 characters
+    const trimmed = stripped.trim().slice(0, 100);
+    return trimmed.length > 0 ? trimmed : null;
+}
+
 /**
  * Returns true if the event should be allowed through.
  * Emits 'server:warning' and eventually disconnects abusers.
@@ -295,12 +343,38 @@ io.on('connection', (socket) => {
         }
     });
 
+    // ---- Chat ----
+    socket.on('chat:send', (msg) => {
+        // Rate limit: max 3 messages per 5 seconds
+        if (!checkChatRate(socket.id)) return;
+
+        // Sanitize the message
+        const sanitized = sanitizeChatMessage(msg);
+        if (!sanitized) return;
+
+        // Find the player's name and room
+        const entry = roomManager.getRoomForSocket(socket.id);
+        if (!entry) return;
+
+        const player = entry.game.players.get(socket.id);
+        if (!player) return;
+
+        // Broadcast to all players in the same room
+        const roomSocketIds = entry.game.players.keys();
+        const chatData = { name: player.name, msg: sanitized, timestamp: Date.now() };
+        for (const sid of roomSocketIds) {
+            const s = io.sockets.sockets.get(sid);
+            if (s) s.emit('chat:message', chatData);
+        }
+    });
+
     socket.on('disconnect', () => {
         serverLogger.info(`Client disconnected: ${socket.id}`);
         clearInterval(rttInterval);
         roomManager.leaveRoom(socket.id);
         rateMap.delete(socket.id);
         respawnCooldowns.delete(socket.id);
+        chatRateMap.delete(socket.id);
     });
 });
 

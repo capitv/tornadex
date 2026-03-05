@@ -23,6 +23,7 @@ export class NetworkManager {
     private onJoinedCallback: ((data: { id: string; worldSize: number; seed: number; zones: TerrainZone[]; safeZones: SafeZone[]; objects: WorldObject[] }) => void) | null = null;
     private onDisconnectCallback: (() => void) | null = null;
     private onReconnectCallback: (() => void) | null = null;
+    private onChatMessageCallback: ((data: { name: string; msg: string; timestamp: number }) => void) | null = null;
 
     // ---- Delta reconstruction state ----
     /**
@@ -165,6 +166,13 @@ export class NetworkManager {
             }
         });
 
+        // Chat message from server
+        this.socket.on('chat:message', (data) => {
+            if (this.onChatMessageCallback) {
+                this.onChatMessageCallback(data);
+            }
+        });
+
         this.socket.on('disconnect', () => {
             try {
                 if (import.meta.env.DEV) console.log('[Network] Disconnected');
@@ -235,6 +243,16 @@ export class NetworkManager {
     /** Called when the socket successfully reconnects and re-join has been sent. */
     onReconnect(cb: () => void): void {
         this.onReconnectCallback = cb;
+    }
+
+    /** Register a callback for incoming chat messages. */
+    onChatMessage(cb: (data: { name: string; msg: string; timestamp: number }) => void): void {
+        this.onChatMessageCallback = cb;
+    }
+
+    /** Send a chat message to the server. */
+    sendChat(msg: string): void {
+        this.socket.emit('chat:send', msg);
     }
 
     get id(): string {

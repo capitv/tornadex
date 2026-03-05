@@ -48,6 +48,19 @@ const deathCamSummary    = document.getElementById('death-cam-summary')!;
 const tutorialOverlay    = document.getElementById('tutorial-overlay')!;
 const tutorialDismissBtn = document.getElementById('tutorial-dismiss-btn')!;
 
+// ---- Prevent default touch behaviors on the game canvas ----
+canvas.addEventListener('touchstart', (e) => { if (isPlaying) e.preventDefault(); }, { passive: false });
+canvas.addEventListener('touchmove', (e) => { if (isPlaying) e.preventDefault(); }, { passive: false });
+canvas.addEventListener('touchend', (e) => { if (isPlaying) e.preventDefault(); }, { passive: false });
+
+// ---- Mobile: default to low graphics quality ----
+if (navigator.maxTouchPoints > 0) {
+    const savedQuality = localStorage.getItem('tornado_io_graphics_quality');
+    if (!savedQuality) {
+        setGraphicsQuality('low');
+    }
+}
+
 // ---- Core Systems ----
 const sceneManager = new SceneManager(canvas);
 const worldRenderer = new WorldRenderer(sceneManager.scene);
@@ -97,6 +110,31 @@ debugText.style.cssText = 'margin-top: 18px;';
 debugOverlay.appendChild(debugText);
 
 document.body.appendChild(debugOverlay);
+
+// ---- Chat DOM elements (built early so startGame/onDeath can reference them) ----
+const chatContainer = document.createElement('div');
+chatContainer.id = 'chat-container';
+
+const chatLog = document.createElement('div');
+chatLog.id = 'chat-log';
+
+const chatInputWrap = document.createElement('div');
+chatInputWrap.id = 'chat-input-wrap';
+
+const chatInput = document.createElement('input');
+chatInput.id = 'chat-input';
+chatInput.type = 'text';
+chatInput.maxLength = 100;
+chatInput.placeholder = 'Press Enter to chat...';
+chatInput.autocomplete = 'off';
+
+chatInputWrap.appendChild(chatInput);
+chatContainer.appendChild(chatLog);
+chatContainer.appendChild(chatInputWrap);
+document.body.appendChild(chatContainer);
+
+// Hidden until the game starts
+chatContainer.style.display = 'none';
 
 let debugVisible = false;
 window.addEventListener('keydown', (e) => {
@@ -152,6 +190,9 @@ let lastScore = 0;
 let worldSize = 2000;
 let previousObjectIds: Set<number> = new Set();
 let isPlaying = false;
+
+// ---- Chat state (DOM created later, referenced early) ----
+let chatOpen = false;
 /** The seed the server confirmed for the current map. Set in onJoined(). */
 let currentMapSeed: number | null = null;
 
@@ -501,11 +542,17 @@ function startGame(): void {
     inputSeq = 0;
     resetRunStats();
 
+    // Show chat
+    chatContainer.style.display = '';
+
     // Start sending inputs at 20 Hz (matches server tick rate)
     if (inputInterval) clearInterval(inputInterval);
     inputInterval = setInterval(() => {
         if (isPlaying) {
-            const raw = input.getInput();
+            // Suppress game input while typing in chat
+            const raw = chatOpen
+                ? { angle: lastSentInput.angle, active: false, boost: false, adminGrow: false, adminShrink: false, seq: 0 }
+                : input.getInput();
             // Stamp this input with the next monotonic sequence number
             inputSeq++;
             const stamped = { ...raw, seq: inputSeq };
@@ -555,6 +602,7 @@ function respawnGame(): void {
     network.respawn();
     interpolation.clear();
     isPlaying = true;
+    chatContainer.style.display = '';
     predictedLocal = null;
     displayPos = null;
 
@@ -755,6 +803,12 @@ network.onState((state: GameState) => {
 network.onDeath((killerName: string) => {
     isPlaying = false;
     input.hideControls();
+
+    // Close chat if open
+    chatOpen = false;
+    chatInputWrap.classList.remove('active');
+    chatInput.blur();
+    chatContainer.style.display = 'none';
 
     // Trigger dramatic vignette effect first
     deathVignette.classList.add('active');
@@ -1202,6 +1256,100 @@ function animate(time: number): void {
 }
 
 requestAnimationFrame(animate);
+
+// ============================================================
+// Chat System
+// ============================================================
+
+/** Chat message buffer — keep last 15 messages. */
+interface ChatEntry {
+    el: HTMLElement;
+    timestamp: number;
+}
+const chatMessages: ChatEntry[] = [];
+const MAX_CHAT_MESSAGES = 15;
+const CHAT_FADE_MS = 10000; // fade messages after 10 seconds
+
+function addChatMessage(name: string, msg: string): void {
+    const el = document.createElement('div');
+    el.className = 'chat-msg';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'chat-name';
+    nameSpan.textContent = name + ':';
+
+    const textSpan = document.createElement('span');
+    textSpan.className = 'chat-text';
+    textSpan.textContent = ' ' + msg;
+
+    el.appendChild(nameSpan);
+    el.appendChild(textSpan);
+    chatLog.appendChild(el);
+
+    const entry: ChatEntry = { el, timestamp: performance.now() };
+    chatMessages.push(entry);
+
+    // Trim to max 15 messages
+    while (chatMessages.length > MAX_CHAT_MESSAGES) {
+        const old = chatMessages.shift();
+        if (old && old.el.parentNode) old.el.parentNode.removeChild(old.el);
+    }
+
+    // Auto-scroll
+    chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+// Fade old messages periodically
+setInterval(() => {
+    const now = performance.now();
+    for (const entry of chatMessages) {
+        if (now - entry.timestamp > CHAT_FADE_MS) {
+            entry.el.classList.add('faded');
+        }
+    }
+}, 1000);
+
+// Listen for incoming chat messages
+network.onChatMessage((data) => {
+    addChatMessage(data.name, data.msg);
+});
+
+// Chat input handling — Enter to open/send, Escape to cancel
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && isPlaying) {
+        if (!chatOpen) {
+            // Open chat input
+            chatOpen = true;
+            chatInputWrap.classList.add('active');
+            chatInput.value = '';
+            chatInput.focus();
+            e.preventDefault();
+        } else {
+            // Send message
+            const msg = chatInput.value.trim();
+            if (msg.length > 0) {
+                network.sendChat(msg);
+            }
+            chatOpen = false;
+            chatInputWrap.classList.remove('active');
+            chatInput.blur();
+            e.preventDefault();
+        }
+    } else if (e.key === 'Escape' && chatOpen) {
+        chatOpen = false;
+        chatInputWrap.classList.remove('active');
+        chatInput.blur();
+        e.preventDefault();
+    }
+});
+
+// Prevent game input events from propagating while chat is focused
+chatInput.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+});
+chatInput.addEventListener('keyup', (e) => {
+    e.stopPropagation();
+});
 
 // ============================================================
 // Persistent Leaderboard UI

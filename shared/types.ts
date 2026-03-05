@@ -179,6 +179,8 @@ export interface ServerToClientEvents {
     'game:kicked': (data: { reason: string }) => void;
     /** Emitted when a room join is rejected (e.g. max rooms reached). */
     'game:error': (data: { message: string }) => void;
+    /** Chat message broadcast to all players in the same room. */
+    'chat:message': (data: { name: string; msg: string; timestamp: number }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -189,6 +191,8 @@ export interface ClientToServerEvents {
     'ping:check': (data: { clientTime: number }) => void;
     /** Response to server-initiated RTT probe. */
     'server:rtt_pong': (data: { t: number }) => void;
+    /** Send a chat message to the room. */
+    'chat:send': (msg: string) => void;
 }
 
 // ---- Health / Metrics ----
