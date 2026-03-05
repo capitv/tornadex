@@ -300,13 +300,15 @@ export class TornadoMesh {
                 float wobX = sin(uTime * 0.8 + t * 2.5) * maxWobble * t;
                 float wobZ = cos(uTime * 0.6 + t * 3.0) * maxWobble * 0.8 * t;
 
-                // Lean into velocity
-                float leanStr = min(5.0, 3.0 / max(uRadius, 0.5));
+                // Lean into velocity with S-curve "snake" effect:
+                // base stays put, mid counter-leans slightly, top leans fully
+                float leanStr = min(2.5, 1.5 / max(uRadius, 0.5));
+                float snakeT = t * t * t - sin(t * 3.14159) * 0.15;
 
                 vec3 transformed = vec3(
-                    tx + wobX - uVelocityX * t * leanStr,
+                    tx + wobX - uVelocityX * snakeT * leanStr,
                     t * uFunnelHeight,
-                    tz + wobZ - uVelocityZ * t * leanStr
+                    tz + wobZ - uVelocityZ * snakeT * leanStr
                 );
                 `,
             );
@@ -798,9 +800,9 @@ export class TornadoMesh {
         const dx = currentPos.x - this.lastPos.x;
         const dz = currentPos.z - this.lastPos.z;
 
-        // Exponential moving average for smooth leaning
-        this.velocity.x = this.velocity.x * 0.9 + dx * 0.1;
-        this.velocity.z = this.velocity.z * 0.9 + dz * 0.1;
+        // Exponential moving average for smooth leaning (normalized to per-second)
+        this.velocity.x = this.velocity.x * 0.88 + dx * 0.12 * 12;
+        this.velocity.z = this.velocity.z * 0.88 + dz * 0.12 * 12;
         this.lastPos.copy(currentPos);
 
         // Delayed visual shape progression (F1 looks like F0, etc.)
