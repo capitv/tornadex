@@ -72,13 +72,13 @@ export class NetworkManager {
         });
 
         this.socket.on('connect', () => {
-            console.log('[Network] Connected:', this.socket.id);
+            if (import.meta.env.DEV) console.log('[Network] Connected:', this.socket.id);
 
             // If this is a RE-connect (not the very first connect) and the player
             // has already joined, automatically re-send player:join so the server
             // can restore the grace-period tornado.
             if (this.hasJoined && this.playerName) {
-                console.log('[Network] Reconnected — re-joining as:', this.playerName);
+                if (import.meta.env.DEV) console.log('[Network] Reconnected — re-joining as:', this.playerName);
                 // Reset delta state so we don't merge deltas onto a stale full state
                 this.resetDeltaState();
                 const rejoinData = this.playerSeed !== undefined
@@ -93,70 +93,102 @@ export class NetworkManager {
 
         // Full state — store as the new baseline and fire the callback directly
         this.socket.on('game:state', (state) => {
-            this.accountPayload(state);
-            this.cachedFullState = state;
-            // Rebuild the player map from the new full state
-            this.cachedPlayerMap.clear();
-            for (const p of state.players) {
-                this.cachedPlayerMap.set(p.id, { ...p });
-            }
-            if (this.onStateCallback) {
-                this.onStateCallback(state);
+            try {
+                this.accountPayload(state);
+                this.cachedFullState = state;
+                // Rebuild the player map from the new full state
+                this.cachedPlayerMap.clear();
+                for (const p of state.players) {
+                    this.cachedPlayerMap.set(p.id, { ...p });
+                }
+                if (this.onStateCallback) {
+                    this.onStateCallback(state);
+                }
+            } catch (err) {
+                console.error('[Network] Error processing game:state:', err);
+                // Critical event — request a full resync
+                this.requestResync();
             }
         });
 
         // Delta state — merge onto the cached full state and fire the callback
         this.socket.on('game:delta', (delta: DeltaGameState) => {
-            this.accountPayload(delta);
-            if (!this.cachedFullState) {
-                // No baseline yet — cannot reconstruct. Drop and wait for the next keyframe.
-                console.warn('[Network] Received game:delta before game:state baseline — dropping');
-                return;
-            }
-            const reconstructed = this.applyDelta(this.cachedFullState, delta);
-            // Update the cached state for the next delta
-            this.cachedFullState = reconstructed;
-            if (this.onStateCallback) {
-                // Tag so the debug overlay can distinguish full vs delta
-                (reconstructed as any)._isDelta = true;
-                this.onStateCallback(reconstructed);
+            try {
+                this.accountPayload(delta);
+                if (!this.cachedFullState) {
+                    // No baseline yet — cannot reconstruct. Drop and wait for the next keyframe.
+                    console.warn('[Network] Received game:delta before game:state baseline — dropping');
+                    return;
+                }
+                const reconstructed = this.applyDelta(this.cachedFullState, delta);
+                // Update the cached state for the next delta
+                this.cachedFullState = reconstructed;
+                if (this.onStateCallback) {
+                    // Tag so the debug overlay can distinguish full vs delta
+                    (reconstructed as any)._isDelta = true;
+                    this.onStateCallback(reconstructed);
+                }
+            } catch (err) {
+                console.error('[Network] Error processing game:delta:', err);
+                // Critical event — request a full resync
+                this.requestResync();
             }
         });
 
         this.socket.on('game:death', (data) => {
-            if (this.onDeathCallback) {
-                this.onDeathCallback(data.killerName);
+            try {
+                if (this.onDeathCallback) {
+                    this.onDeathCallback(data.killerName);
+                }
+            } catch (err) {
+                console.error('[Network] Error processing game:death:', err);
             }
         });
 
         this.socket.on('game:joined', (data) => {
-            this.playerId = data.id;
-            if (this.onJoinedCallback) {
-                this.onJoinedCallback(data);
+            try {
+                this.playerId = data.id;
+                if (this.onJoinedCallback) {
+                    this.onJoinedCallback(data);
+                }
+            } catch (err) {
+                console.error('[Network] Error processing game:joined:', err);
             }
         });
 
         // Server-initiated RTT probe — echo timestamp back immediately
         this.socket.on('server:rtt_ping', (data) => {
-            this.socket.emit('server:rtt_pong', { t: data.t });
+            try {
+                this.socket.emit('server:rtt_pong', { t: data.t });
+            } catch (err) {
+                console.error('[Network] Error processing server:rtt_ping:', err);
+            }
         });
 
         this.socket.on('disconnect', () => {
-            console.log('[Network] Disconnected');
-            if (this.onDisconnectCallback) {
-                this.onDisconnectCallback();
+            try {
+                if (import.meta.env.DEV) console.log('[Network] Disconnected');
+                if (this.onDisconnectCallback) {
+                    this.onDisconnectCallback();
+                }
+            } catch (err) {
+                console.error('[Network] Error processing disconnect:', err);
             }
         });
 
         // Receive the echoed timestamp and compute RTT
         this.socket.on('ping:reply', (data) => {
-            if (!this.pingInFlight) return;
-            this.pingInFlight = false;
-            const rtt = performance.now() - data.clientTime;
-            this.pingSamples.push(rtt);
-            if (this.pingSamples.length > 3) this.pingSamples.shift();
-            const sum = this.pingSamples.reduce((a, b) => a + b, 0);
-            this.currentPing = Math.round(sum / this.pingSamples.length);
+            try {
+                if (!this.pingInFlight) return;
+                this.pingInFlight = false;
+                const rtt = performance.now() - data.clientTime;
+                this.pingSamples.push(rtt);
+                if (this.pingSamples.length > 3) this.pingSamples.shift();
+                const sum = this.pingSamples.reduce((a, b) => a + b, 0);
+                this.currentPing = Math.round(sum / this.pingSamples.length);
+            } catch (err) {
+                console.error('[Network] Error processing ping:reply:', err);
+            }
         });
 
         // Flush bandwidth counters once per second into the publicly-readable smoothed values
@@ -270,6 +302,18 @@ export class NetworkManager {
             clearInterval(this.bandwidthIntervalId);
             this.bandwidthIntervalId = null;
         }
+    }
+
+    // ---- Resync ----
+
+    /**
+     * Request a full state resync from the server. Called when a critical
+     * event handler (game:state, game:delta) throws during processing.
+     * Resets local delta state so the next full state can be cleanly applied.
+     */
+    private requestResync(): void {
+        this.resetDeltaState();
+        this.socket.emit('player:resync');
     }
 
     // ---- Delta reconstruction helpers ----

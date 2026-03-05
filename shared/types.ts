@@ -183,6 +183,7 @@ export interface ClientToServerEvents {
     'player:join': (data: { name: string; seed?: number }) => void;
     'player:input': (input: InputPayload) => void;
     'player:respawn': () => void;
+    'player:resync': () => void;
     'ping:check': (data: { clientTime: number }) => void;
     /** Response to server-initiated RTT probe. */
     'server:rtt_pong': (data: { t: number }) => void;

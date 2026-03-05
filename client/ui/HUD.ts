@@ -58,6 +58,16 @@ export class HUD {
     private pingDot: HTMLElement;
     private pingValue: HTMLElement;
 
+    // Stamina cooldown state
+    private staminaCooldownEl: HTMLElement;
+    private staminaCooldownTimer: ReturnType<typeof setTimeout> | null = null;
+    private prevStaminaValue: number = 100;
+    private isShowingCooldown: boolean = false;
+
+    // Max size indicator
+    private maxSizeEl: HTMLElement;
+    private isShowingMaxSize: boolean = false;
+
     private currentScore: number = 0;
     private displayScore: number = 0;
     private scoreRafId: number | null = null;
@@ -86,6 +96,24 @@ export class HUD {
         // Initialise data attribute for CSS-driven category colours
         this.sizeDisplay.dataset.cat = 'F0';
 
+        // Stamina cooldown overlay text
+        this.staminaCooldownEl = document.createElement('span');
+        this.staminaCooldownEl.id = 'stamina-cooldown-text';
+        this.staminaCooldownEl.className = 'stamina-cooldown-text';
+        this.staminaCooldownEl.textContent = '';
+        const staminaBarWrap = document.getElementById('stamina-bar-wrap');
+        if (staminaBarWrap) {
+            staminaBarWrap.style.position = 'relative';
+            staminaBarWrap.appendChild(this.staminaCooldownEl);
+        }
+
+        // Max size indicator near the growth bar
+        this.maxSizeEl = document.createElement('div');
+        this.maxSizeEl.id = 'max-size-msg';
+        this.maxSizeEl.className = 'max-size-msg';
+        this.maxSizeEl.textContent = 'MAX SIZE!';
+        this.sizeDisplay.style.position = 'relative';
+        this.sizeDisplay.appendChild(this.maxSizeEl);
     }
 
     setWorldSize(size: number): void {
@@ -159,6 +187,15 @@ export class HUD {
         }
 
         this.sizeLabel.textContent = `SIZE: ${radius.toFixed(1)}`;
+
+        // Max size reached indicator (PLAYER_MAX_RADIUS = 25)
+        if (radius >= 25 && !this.isShowingMaxSize) {
+            this.isShowingMaxSize = true;
+            this.maxSizeEl.classList.add('active');
+        } else if (radius < 25 && this.isShowingMaxSize) {
+            this.isShowingMaxSize = false;
+            this.maxSizeEl.classList.remove('active');
+        }
     }
 
     // ---- Stamina ----
@@ -177,6 +214,42 @@ export class HUD {
         } else {
             this.boostKey.classList.remove('active');
         }
+
+        // Cooldown visual: stamina just hit 0 after boosting — show "COOLDOWN" briefly
+        if (stamina <= 0 && this.prevStaminaValue > 0 && !this.isShowingCooldown) {
+            this.isShowingCooldown = true;
+            this.staminaCooldownEl.textContent = 'COOLDOWN';
+            this.staminaCooldownEl.classList.add('active', 'cooldown-flash');
+            this.staminaCooldownEl.classList.remove('recharging');
+
+            if (this.staminaCooldownTimer !== null) clearTimeout(this.staminaCooldownTimer);
+            this.staminaCooldownTimer = setTimeout(() => {
+                this.isShowingCooldown = false;
+                // Switch to RECHARGING if still recharging
+                if (stamina < 100) {
+                    this.staminaCooldownEl.textContent = 'RECHARGING';
+                    this.staminaCooldownEl.classList.remove('cooldown-flash');
+                    this.staminaCooldownEl.classList.add('recharging');
+                } else {
+                    this.staminaCooldownEl.classList.remove('active', 'cooldown-flash');
+                }
+            }, 1000);
+        }
+        // Recharging state: not boosting, stamina < 100, and not showing the COOLDOWN flash
+        else if (!isBoosting && stamina > 0 && stamina < 100 && !this.isShowingCooldown) {
+            this.staminaCooldownEl.textContent = 'RECHARGING';
+            this.staminaCooldownEl.classList.add('active', 'recharging');
+            this.staminaCooldownEl.classList.remove('cooldown-flash');
+        }
+        // Stamina is full or actively boosting — hide the text
+        else if (stamina >= 100 || isBoosting) {
+            if (!this.isShowingCooldown) {
+                this.staminaCooldownEl.classList.remove('active', 'recharging', 'cooldown-flash');
+                this.staminaCooldownEl.textContent = '';
+            }
+        }
+
+        this.prevStaminaValue = stamina;
     }
 
     // ---- Ping indicator ----
@@ -187,13 +260,13 @@ export class HUD {
     updatePing(ms: number): void {
         this.pingValue.textContent = ms > 0 ? `${ms}ms` : '--';
 
-        // Colour-coded dot: green < 60ms, yellow 60-120ms, red > 120ms
+        // Colour-coded dot: green < 80ms, yellow 80-150ms, red > 150ms
         if (ms <= 0) {
             this.pingDot.dataset.quality = 'unknown';
-        } else if (ms < 60) {
+        } else if (ms < 80) {
             this.pingDot.dataset.quality = 'good';
-        } else if (ms < 120) {
-            this.pingDot.dataset.quality = 'medium';
+        } else if (ms <= 150) {
+            this.pingDot.dataset.quality = 'warning';
         } else {
             this.pingDot.dataset.quality = 'bad';
         }
