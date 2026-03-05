@@ -232,7 +232,8 @@ export class BotManager {
 
         let targetBots: number;
         if (realPlayerCount === 0) {
-            targetBots = TARGET_TOTAL_WITH_NO_REAL_PLAYERS;
+            // No real players — remove all bots to save resources
+            targetBots = 0;
         } else if (realPlayerCount === 1) {
             // Keep at least MIN_BOTS_WITH_ONE_REAL_PLAYER bots alongside the lone real player
             targetBots = Math.max(MIN_BOTS_WITH_ONE_REAL_PLAYER, TARGET_TOTAL_WITH_ONE_REAL_PLAYER - realPlayerCount);

@@ -9,3 +9,6 @@ Thumbs.db
 # Agent worktrees
 .claude/worktrees/
 patch-*.patch
+
+# Runtime data (persists on server, don't overwrite on pull)
+data/leaderboard.json

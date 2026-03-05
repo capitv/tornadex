@@ -115,7 +115,7 @@ npx vite build
 
 # Buildar o server (TypeScript → dist/server/)
 echo "    Buildando server (tsc)..."
-npx tsc --outDir dist --rootDir .
+npx tsc -p tsconfig.server.json
 
 echo "    Build completo."
 

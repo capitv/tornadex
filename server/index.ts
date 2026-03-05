@@ -47,6 +47,7 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
     pingInterval: 5000,
 });
 
+app.set('trust proxy', 'loopback'); // Trust nginx on localhost — req.ip = real client IP
 app.use(express.json());
 
 // ---- Metrics ----
@@ -54,7 +55,7 @@ const metrics = new Metrics();
 
 // ---- Room Manager ----
 const roomManager = new RoomManager(io, metrics);
-roomManager.ensureDefaultRoom();
+// Rooms are created on-demand when a player joins — no idle rooms at startup.
 
 // ============================================================
 // Rate Limiting
@@ -397,8 +398,12 @@ app.get('/health', (_req, res) => {
 // GET /metrics (Task 6 — protected endpoint)
 app.get('/metrics', (req, res) => {
     // Allow from localhost or with valid bearer token
-    const remoteAddr = req.ip || req.socket.remoteAddress || '';
-    const isLocalhost = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remoteAddr);
+    // Behind nginx, req.ip may be the real client IP (via X-Real-IP / trust proxy).
+    // Check both req.ip and the raw socket address for localhost.
+    const remoteAddr = req.socket.remoteAddress || '';
+    const forwarded = req.ip || '';
+    const localhostAddrs = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
+    const isLocalhost = localhostAddrs.includes(remoteAddr) && localhostAddrs.includes(forwarded);
 
     const metricsToken = process.env.METRICS_TOKEN;
     let hasValidToken = false;

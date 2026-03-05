@@ -129,12 +129,8 @@ export class Game {
 
     start(): void {
         logger.info(`Starting game loop at ${TICK_RATE} ticks/sec`);
-        // Use self-correcting setTimeout loop instead of setInterval
-        // to account for actual tick duration and prevent drift.
-        this._lastTickTime = Date.now();
-        this.scheduleNextTick();
-        // Seed bots immediately — no real players are online yet
-        this.botManager.onRealPlayerChange(0);
+        // Room starts paused — game loop only runs when real players are present.
+        // The first addPlayer() call with a non-bot ID will call resume().
     }
 
     /** Wall-clock time of the last tick start (for self-correcting loop). */
@@ -162,6 +158,26 @@ export class Game {
         }
     }
 
+    /** Pause the game loop (no real players). Bots are removed by BotManager. */
+    pause(): void {
+        if (this.tickTimer) {
+            clearTimeout(this.tickTimer);
+            this.tickTimer = null;
+            logger.info('Game loop paused (no real players)');
+        }
+    }
+
+    /** Resume the game loop (real player joined). */
+    resume(): void {
+        if (this.tickTimer === null) {
+            logger.info('Game loop resumed (player joined)');
+            this._lastTickTime = Date.now();
+            this.scheduleNextTick();
+            // Seed bots for the joining player
+            this.botManager.onRealPlayerChange(this.getRealPlayerCount());
+        }
+    }
+
     addPlayer(id: string, name: string): Player {
         const player = new Player(id, name);
         this.players.set(id, player);
@@ -182,6 +198,8 @@ export class Game {
         // Notify the bot manager only for real (non-bot) players so it can
         // scale the bot population appropriately.
         if (!id.startsWith('bot_')) {
+            // Resume game loop if it was paused (first real player joining)
+            this.resume();
             this.botManager.onRealPlayerChange(this.getRealPlayerCount());
         }
 
@@ -215,7 +233,12 @@ export class Game {
 
             // Notify the bot manager only for real (non-bot) players.
             if (!id.startsWith('bot_')) {
-                this.botManager.onRealPlayerChange(this.getRealPlayerCount());
+                const realCount = this.getRealPlayerCount();
+                this.botManager.onRealPlayerChange(realCount);
+                // Pause game loop if no real players remain
+                if (realCount === 0) {
+                    this.pause();
+                }
             }
         }
     }
