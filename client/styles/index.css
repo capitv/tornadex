@@ -162,15 +162,17 @@ body {
 
 .tutorial-btn {
   font-family: var(--font);
-  font-size: 1.1rem;
+  font-size: 1.2rem;
   font-weight: 700;
-  padding: 0.8rem 2.5rem;
+  padding: 1rem 3rem;
+  min-height: 48px;
   border: none;
   border-radius: var(--radius);
   background: var(--accent);
   color: #fff;
   cursor: pointer;
   transition: background 0.2s, transform 0.15s;
+  touch-action: manipulation;
 }
 
 .tutorial-btn:hover {

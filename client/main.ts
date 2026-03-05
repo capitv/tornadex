@@ -502,11 +502,16 @@ nameInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') startGame();
 });
 
-// ---- Tutorial dismiss handler ----
+// ---- Tutorial: show on page load (first visit only), dismiss before playing ----
 tutorialDismissBtn.addEventListener('click', () => {
     tutorialOverlay.classList.add('hidden');
     localStorage.setItem('tutorialSeen', '1');
 });
+try {
+    if (!localStorage.getItem('tutorialSeen')) {
+        tutorialOverlay.classList.remove('hidden');
+    }
+} catch { /* localStorage unavailable */ }
 
 function startGame(): void {
     playerName = nameInput.value.trim() || 'Tornado';
@@ -518,11 +523,6 @@ function startGame(): void {
     deathCamActive = false;
     deathCamOverlay.classList.add('hidden');
     hud.classList.remove('hidden');
-
-    // ---- Show tutorial on first ever join ----
-    if (!localStorage.getItem('tutorialSeen')) {
-        tutorialOverlay.classList.remove('hidden');
-    }
 
     // Read the optional seed preference from the input field
     const rawSeed = seedInput.value.trim();
