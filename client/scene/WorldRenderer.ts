@@ -1164,16 +1164,32 @@ export class WorldRenderer {
                 const lodNear = isTree ? this._treeLodNearDistance : this._lodNearDistance;
                 const lodFar  = isTree ? this._treeLodFarDistance  : this._lodFarDistance;
 
+                const current = this.objectLodLevel.get(entry.objId) ?? 'detail';
+
+                // Hysteresis: use tighter thresholds to switch back to a
+                // higher-detail level, preventing rapid toggling (flicker)
+                // at LOD boundaries.  Objects must move 10% closer than
+                // the boundary before upgrading, but degrade immediately.
+                const hysteresis = isTree ? 8 : 15;
                 let target: LodLevel;
                 if (!chunkInFrustum || dist > lodFar) {
                     target = 'hidden';
                 } else if (dist > lodNear) {
+                    // Only downgrade to lod; if already lod, require moving
+                    // closer than (lodNear - hysteresis) to upgrade back.
+                    target = current === 'detail' ? 'lod' : (dist < lodNear - hysteresis ? 'detail' : 'lod');
+                } else if (current === 'lod' && dist > lodNear - hysteresis) {
+                    // In the hysteresis band — stay at current level
                     target = 'lod';
                 } else {
                     target = 'detail';
                 }
 
-                const current = this.objectLodLevel.get(entry.objId) ?? 'detail';
+                // Also apply hysteresis for hidden→lod transition
+                if (current === 'hidden' && target === 'lod' && dist > lodFar - hysteresis) {
+                    target = 'hidden';
+                }
+
                 if (current === target) continue; // no state change, skip
 
                 // Hide the currently visible representation
