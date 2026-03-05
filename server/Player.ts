@@ -173,7 +173,15 @@ export class Player {
 
     grow(points: number, radiusGrowth: number): void {
         this.score += points;
-        this.radius = Math.min(PLAYER_MAX_RADIUS, this.radius + radiusGrowth);
+        // Diminishing growth: large tornadoes grow progressively slower.
+        // Full growth up to radius 2, then inverse scaling so sweeping
+        // over many trees as a huge tornado doesn't snowball out of control.
+        // r=2 → 100%, r=5 → 40%, r=10 → 20%, r=25 → 8%
+        let growthMult = 1.0;
+        if (this.radius > 2) {
+            growthMult = 2.0 / this.radius; // inversely proportional to size
+        }
+        this.radius = Math.min(PLAYER_MAX_RADIUS, this.radius + radiusGrowth * growthMult);
     }
 
     canAbsorb(other: Player): boolean {

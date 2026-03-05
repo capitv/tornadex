@@ -105,105 +105,42 @@ void main() {
 `;
 
 // ---- Vertex Shader ------------------------------------------------
-// Passes UVs and world-space position to the fragment shader.
-// The sphere is rendered with depthWrite=false so it always sits
-// behind everything, and we disable fog on it manually.
+// Passes the local-space elevation (-1..+1) to the fragment shader.
+// Using local position.y (sphere normal Y) avoids UV seam artifacts
+// at the poles and gives a perfectly smooth gradient.
 const skyVertexShader = `
-varying vec2 vUv;
-varying vec3 vWorldPos;
+varying float vElevation; // -1 = straight down, 0 = horizon, +1 = straight up
 
 void main() {
-    vUv = uv;
-    vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
-    // Always render at maximum depth
+    // normalize(position).y == position.y for a unit sphere
+    vElevation = normalize(position).y;
+
     vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * mvPos;
-    // Push to far plane so it never occludes geometry
+    // Push to far plane so sky never occludes geometry
     gl_Position.z = gl_Position.w;
 }
 `;
 
 // ---- Fragment Shader -----------------------------------------------
-// Cheap layered noise that approximates animated storm clouds.
-// Two octaves of value noise scrolled at different speeds/directions
-// give a convincing cloud-bank feel without being expensive.
+// Clean gradient sky using sphere elevation (no UV seam artifacts).
+// vElevation passed from vertex shader: 0=horizon, +1=zenith, -1=underground.
 const skyFragmentShader = `
-uniform float uTime;
-uniform float uLightningFlash;    // 0..1, added as bright white flash
-uniform vec3  uHorizonColor;      // fog-matching horizon colour
-uniform vec3  uZenithColor;       // darker overhead colour
+uniform float uLightningFlash;
+uniform vec3  uHorizonColor;
+uniform vec3  uZenithColor;
 
-varying vec2 vUv;
-varying vec3 vWorldPos;
-
-// --- Cheap hash-based value noise ---
-float hash(vec2 p) {
-    p = fract(p * vec2(127.1, 311.7));
-    p += dot(p, p + 19.19);
-    return fract(p.x * p.y);
-}
-
-float valueNoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f); // smoothstep
-
-    float a = hash(i);
-    float b = hash(i + vec2(1.0, 0.0));
-    float c = hash(i + vec2(0.0, 1.0));
-    float d = hash(i + vec2(1.0, 1.0));
-
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-float fbm(vec2 p) {
-    float v = 0.0;
-    float amp = 0.5;
-    for (int i = 0; i < 4; i++) {
-        v   += amp * valueNoise(p);
-        p   *= 2.1;
-        amp *= 0.5;
-    }
-    return v;
-}
+varying float vElevation;
 
 void main() {
-    // Vertical gradient: zenith (top of sphere) -> horizon (equator)
-    // vUv.y == 1 at north pole, 0 at equator on a SphereGeometry
-    float horizon = 1.0 - clamp(vUv.y * 1.8, 0.0, 1.0);
+    // t: 0 at/below horizon, 1 at zenith — ease-in so colour stays near horizon longer
+    float t = clamp(vElevation, 0.0, 1.0);
+    t = t * t;
 
-    // --- Cloud layer 1: large slow banks scrolling left --
-    vec2 uv1 = vUv * vec2(3.5, 1.8) + vec2(-uTime * 0.008, uTime * 0.003);
-    float cloud1 = fbm(uv1);
+    vec3 color = mix(uHorizonColor, uZenithColor, t);
 
-    // --- Cloud layer 2: smaller faster wisps scrolling right --
-    vec2 uv2 = vUv * vec2(6.0, 3.0) + vec2(uTime * 0.012, -uTime * 0.006);
-    float cloud2 = fbm(uv2);
-
-    // Combine and threshold to get solid dark cloud patches
-    float clouds = cloud1 * 0.7 + cloud2 * 0.3;
-    clouds = smoothstep(0.38, 0.72, clouds);     // dark => 0, bright => 1
-
-    // Clouds are slightly lighter for a less oppressively dark sky
-    vec3 cloudDark  = mix(vec3(0.16, 0.19, 0.23), vec3(0.24, 0.28, 0.33), horizon);
-    vec3 cloudLight = mix(vec3(0.28, 0.32, 0.38), vec3(0.36, 0.40, 0.45), horizon);
-    vec3 cloudColor = mix(cloudDark, cloudLight, clouds);
-
-    // Sky gradient behind the clouds
-    vec3 skyColor = mix(uZenithColor, uHorizonColor, horizon);
-
-    // Mix sky + clouds (clouds cover most of the sky for storm look)
-    float cloudCoverage = clamp(clouds * 1.4 + 0.3, 0.0, 1.0);
-    vec3 color = mix(skyColor, cloudColor, cloudCoverage);
-
-    // Lightning flash: pure white/blue-white tint over the whole sky
+    // Lightning flash
     color = mix(color, vec3(0.85, 0.92, 1.0), uLightningFlash * 0.75);
-
-    // Smooth fade at the very bottom — use a gentler curve so the horizon
-    // colour extends further down and there is no visible dark band.
-    float fadeBottom = clamp(vUv.y * 2.5, 0.0, 1.0);
-    fadeBottom = fadeBottom * fadeBottom; // ease-in for smoother blend
-    color = mix(uHorizonColor, color, fadeBottom);
 
     gl_FragColor = vec4(color, 1.0);
 }
@@ -335,17 +272,18 @@ export class SkyboxManager {
     constructor(scene: THREE.Scene) {
         this.scene = scene;
 
+        // Horizon = same as scene fog (0x3d4b57) for seamless blend
+        // Zenith = moderately darker grey — stormy but not pitch black
         const horizonColor = new THREE.Color(0x3d4b57);
-        const zenithColor  = new THREE.Color(0x263545);
+        const zenithColor  = new THREE.Color(0x232c36);
 
         this.skyMat = new THREE.ShaderMaterial({
             vertexShader:   skyVertexShader,
             fragmentShader: skyFragmentShader,
             uniforms: {
-                uTime:          { value: 0 },
-                uLightningFlash:{ value: 0 },
-                uHorizonColor:  { value: horizonColor },
-                uZenithColor:   { value: zenithColor },
+                uLightningFlash: { value: 0 },
+                uHorizonColor:   { value: horizonColor },
+                uZenithColor:    { value: zenithColor },
             },
             side:       THREE.BackSide,   // render inside of sphere
             depthWrite: false,
@@ -398,9 +336,6 @@ export class SkyboxManager {
 
     update(dtMs: number): void {
         this.elapsed += dtMs;
-
-        // Advance shader time (seconds, slow)
-        this.skyMat.uniforms.uTime.value = this.elapsed * 0.001;
 
         // ---- countdown to next strike ----
         this.nextStrikeIn -= dtMs;
@@ -596,7 +531,7 @@ export class SkyboxManager {
             const angle = rng() * Math.PI * 2;
             const r     = Math.sqrt(rng()) * SPREAD_RADIUS; // sqrt for uniform disc distribution
             const wx    = Math.cos(angle) * r;
-            const wy    = 45 + rng() * 10;  // Y=45..55
+            const wy    = 35 + rng() * 15;  // Y=35..50 — lower to avoid top clipping
             const wz    = Math.sin(angle) * r;
 
             // Per-cloud wind: mostly blowing in +X with a gentle Z component.

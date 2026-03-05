@@ -15,16 +15,15 @@ export const PLAYER_MIN_RADIUS = 0.8;           // Starting tornado radius
 export const PLAYER_MAX_RADIUS = 25;            // Maximum tornado radius
 export const PLAYER_SPAWN_RADIUS = 0.8;
 
-// Growth amounts per absorbed object (halved to slow down F0-F4 progression)
+// Growth amounts per absorbed object — tuned so early levels feel rewarding
+// while late-game (F4/F5) requires real effort to grow further.
 export const OBJECT_GROWTH: Record<WorldObjectType, number> = {
-    'animal':       0.005,
-    'tree':         0.012,
-    'car':          0.025,
-    'house':        0.05,
-    'building':     0.15,
-    'trailer_park': 0.08,
-    'stadium':      0.15,
-    'bridge':       0.10,
+    'animal':       0.003,
+    'tree':         0.007,
+    'car':          0.015,
+    'barn':         0.04,
+    'trailer_park': 0.05,
+    'stadium':      0.10,
 };
 
 // Tornado absorption: attacker must be X times bigger
@@ -47,14 +46,12 @@ export const OBJECT_RESPAWN_TICKS = TICK_RATE * 30; // 30 seconds
 
 // World object counts
 export const OBJECT_COUNTS = {
-    tree:         5000,  // Dense forests
-    house:        200,   // Scattered residential
+    tree:         8000,  // Dense forests
+    barn:         3,     // Scattered barns
     car:          150,   // Some traffic
     animal:       200,   // Wildlife
-    building:     30,    // Rare city structures
     trailer_park: 15,    // Rare high-value clusters
     stadium:      5,     // Very rare arena structures
-    bridge:       8,     // Near-road spans
 };
 
 // Spatial grid cell size
@@ -70,8 +67,8 @@ export const ATTRACTION_RADIUS_MULT = 2.5;
 export const SPEED_SIZE_FACTOR = 0.015;
 
 // ---- Power-ups ----
-export const POWERUP_COUNT_MIN = 5;
-export const POWERUP_COUNT_MAX = 10;
+export const POWERUP_COUNT_MIN = 10;
+export const POWERUP_COUNT_MAX = 18;
 export const POWERUP_RESPAWN_TICKS = TICK_RATE * 30;   // 30 seconds
 export const POWERUP_COLLECT_RADIUS = 1;               // extra radius added to player radius for collection
 
@@ -99,7 +96,7 @@ export const VEHICLE_RESPAWN_TICKS = TICK_RATE * 10;
 /** Points awarded for destroying an NPC vehicle. */
 export const VEHICLE_POINTS = 150;
 /** Radius growth awarded for destroying an NPC vehicle. */
-export const VEHICLE_GROWTH = 0.10;
+export const VEHICLE_GROWTH = 0.06;
 /** Minimum tornado radius required to destroy a vehicle (same as a car). */
 export const VEHICLE_SIZE = 0.8;
 /** Collision radius of a vehicle for tornado interaction. */

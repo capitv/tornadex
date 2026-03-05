@@ -11,13 +11,11 @@ import { getGraphicsPreset, onGraphicsChange } from '../settings/GraphicsConfig.
 // Colors by object type
 const TYPE_COLORS: Record<string, number[]> = {
     tree:         [0x2d8a4e, 0x3ba55d, 0x228b22, 0x1a6b30, 0x4caf50, 0x2e7d32, 0x1b5e20],
-    house:        [0xd4a574, 0xc19a6b, 0xb8860b],
+    barn:         [0x8B4513, 0xA0522D, 0xCD853F],
     car:          [0xe74c3c, 0x3498db, 0xf39c12, 0x9b59b6, 0x1abc9c],
     animal:       [0x8b6914, 0x654321, 0xd2691e],
-    building:     [0x7f8c8d, 0x95a5a6, 0x606c76],
     trailer_park: [0xd4c5a9, 0xc8b89a, 0xbfad8e, 0xe0d4bc],
     stadium:      [0xa8a8a8, 0x909090, 0xb5b5b5],
-    bridge:       [0x8a8a8a, 0x969696, 0x7c7c7c],
 };
 
 // ---- LOD thresholds (instance-level defaults; overridden by graphics preset) ----
@@ -39,24 +37,20 @@ const CHUNK_SIZE = 200;
 // ---- Mesh-key lookup tables ----
 const DETAIL_KEYS: Record<string, string[]> = {
     tree:         ['treeTrunk', 'tree'],
-    house:        ['house', 'houseRoof'],
+    barn:         ['barnBase', 'barnRoof'],
     car:          ['car', 'carCabin'],
     animal:       ['animal', 'animalHead'],
-    building:     ['building'],
     trailer_park: ['trailerBase0', 'trailerBase1', 'trailerBase2'],
     stadium:      ['stadiumBase', 'stadiumRing'],
-    bridge:       ['bridgeDeck', 'bridgePillar0', 'bridgePillar1'],
 };
 
 const LOD_KEYS: Record<string, string[]> = {
     tree:         ['treeLOD'],
-    house:        ['houseLOD'],
+    barn:         ['barnLOD'],
     car:          ['carLOD'],
     animal:       ['animalLOD'],
-    building:     ['buildingLOD'],
     trailer_park: ['trailerParkLOD'],
     stadium:      ['stadiumLOD'],
-    bridge:       ['bridgeLOD'],
 };
 
 type LodLevel = 'detail' | 'lod' | 'hidden';
@@ -153,12 +147,7 @@ export class WorldRenderer {
     }
 
     public getElevation(x: number, z: number): number {
-        // Layered sine waves for natural rolling hills
-        let height = 0;
-        height += Math.sin(x * 0.012) * Math.cos(z * 0.015) * 1.8;
-        height += Math.sin(x * 0.025 + 1.5) * Math.sin(z * 0.02 + 0.8) * 1.0;
-        height += Math.cos(x * 0.04 + z * 0.03) * 0.5;
-        return Math.max(0, height);
+        return 0;
     }
 
     private initEnvironment(worldSize: number): void {
@@ -721,8 +710,8 @@ export class WorldRenderer {
 
         // Keep track of current index per type
         const indices: Record<string, number> = {
-            tree: 0, house: 0, car: 0, animal: 0, building: 0,
-            trailer_park: 0, stadium: 0, bridge: 0,
+            tree: 0, barn: 0, car: 0, animal: 0,
+            trailer_park: 0, stadium: 0,
         };
 
         for (const obj of objects) {
@@ -750,30 +739,24 @@ export class WorldRenderer {
         // Per-instance colour variety comes from setColorAt (stored in the instanceColor buffer).
         const matTreeTrunk      = new THREE.MeshLambertMaterial({ color: 0x5c4033 });
         const matTreeFoliage    = new THREE.MeshLambertMaterial({ color: 0xffffff });
-        const matHouseBase      = new THREE.MeshLambertMaterial({ color: 0xffffff });
-        const matHouseRoof      = new THREE.MeshLambertMaterial({ color: 0x8b4513 });
+        const matBarnBase       = new THREE.MeshLambertMaterial({ color: 0xffffff });
+        const matBarnRoof       = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
         const matCarBody        = new THREE.MeshLambertMaterial({ color: 0xffffff });
         const matCarCabin       = new THREE.MeshLambertMaterial({ color: 0x87ceeb });
         const matAnimal         = new THREE.MeshLambertMaterial({ color: 0xffffff });
-        const matBuilding       = new THREE.MeshLambertMaterial({ color: 0xffffff });
         // Trailer park — beige/tan mobile home walls
         const matTrailerBase    = new THREE.MeshLambertMaterial({ color: 0xffffff });
         // Stadium — grey concrete body + coloured event ring on top
         const matStadiumBase    = new THREE.MeshLambertMaterial({ color: 0x909090 });
         const matStadiumRing    = new THREE.MeshLambertMaterial({ color: 0xe8451a }); // bright red ring
-        // Bridge — grey concrete deck + support pillars
-        const matBridgeDeck     = new THREE.MeshLambertMaterial({ color: 0x8a8a8a });
-        const matBridgePillar   = new THREE.MeshLambertMaterial({ color: 0x6e6e6e });
 
         // LOD materials — flat single colour, no sub-part detail
         const matTreeLOD        = new THREE.MeshLambertMaterial({ color: 0x2d8a4e });
-        const matHouseLOD       = new THREE.MeshLambertMaterial({ color: 0xc19a6b });
+        const matBarnLOD        = new THREE.MeshLambertMaterial({ color: 0xA0522D });
         const matCarLOD         = new THREE.MeshLambertMaterial({ color: 0xe74c3c });
         const matAnimalLOD      = new THREE.MeshLambertMaterial({ color: 0x8b6914 });
-        const matBuildingLOD    = new THREE.MeshLambertMaterial({ color: 0x7f8c8d });
         const matTrailerParkLOD = new THREE.MeshLambertMaterial({ color: 0xc8b89a });
         const matStadiumLOD     = new THREE.MeshLambertMaterial({ color: 0x909090 });
-        const matBridgeLOD      = new THREE.MeshLambertMaterial({ color: 0x8a8a8a });
 
         const makeIM = (
             geo:       THREE.BufferGeometry,
@@ -810,9 +793,9 @@ export class WorldRenderer {
             makeIM(new THREE.CylinderGeometry(0.08, 0.14, 1.0, 5), matTreeTrunk,   'treeTrunk', counts.tree);
             makeIM(new THREE.SphereGeometry(0.55, 6, 5),            matTreeFoliage, 'tree',      counts.tree, 'tree');
         }
-        if (counts.house > 0) {
-            makeIM(new THREE.BoxGeometry(1.6, 1.2, 1.4), matHouseBase, 'house',     counts.house, 'house');
-            makeIM(new THREE.ConeGeometry(1.3, 0.8, 4),  matHouseRoof, 'houseRoof', counts.house);
+        if (counts.barn > 0) {
+            makeIM(new THREE.BoxGeometry(3.0, 2.0, 2.0), matBarnBase, 'barnBase', counts.barn, 'barn');
+            makeIM(new THREE.ConeGeometry(2.2, 1.2, 4),  matBarnRoof, 'barnRoof', counts.barn);
         }
         if (counts.car > 0) {
             makeIM(new THREE.BoxGeometry(1.0, 0.4, 0.6), matCarBody,  'car',      counts.car, 'car');
@@ -821,9 +804,6 @@ export class WorldRenderer {
         if (counts.animal > 0) {
             makeIM(new THREE.SphereGeometry(0.25, 6, 5), matAnimal, 'animal',     counts.animal, 'animal');
             makeIM(new THREE.SphereGeometry(0.12, 6, 5), matAnimal, 'animalHead', counts.animal);
-        }
-        if (counts.building > 0) {
-            makeIM(new THREE.BoxGeometry(2.0, 1.0, 2.0), matBuilding, 'building', counts.building, 'building');
         }
         // Trailer park — 3 staggered wide flat boxes simulating clustered mobile homes
         if (counts.trailer_park > 0) {
@@ -838,21 +818,14 @@ export class WorldRenderer {
             makeIM(new THREE.CylinderGeometry(4.5, 4.5, 2.0, 16), matStadiumBase, 'stadiumBase', counts.stadium, 'stadium');
             makeIM(new THREE.TorusGeometry(4.0, 0.4, 6, 16),       matStadiumRing, 'stadiumRing', counts.stadium);
         }
-        // Bridge — long narrow deck + two support pillars underneath
-        if (counts.bridge > 0) {
-            makeIM(new THREE.BoxGeometry(30.0, 0.6, 3.0), matBridgeDeck,   'bridgeDeck',    counts.bridge, 'bridge');
-            makeIM(new THREE.BoxGeometry(0.8,  3.0, 3.0), matBridgePillar, 'bridgePillar0', counts.bridge);
-            makeIM(new THREE.BoxGeometry(0.8,  3.0, 3.0), matBridgePillar, 'bridgePillar1', counts.bridge);
-        }
-
         // ---- LOD geometry (one mesh part per type — minimal vertex count) ----
         // Tree LOD: single green box — readable silhouette at distance, no trunk detail
         if (counts.tree > 0) {
             makeIM(new THREE.BoxGeometry(1.0, 2.0, 1.0), matTreeLOD, 'treeLOD', counts.tree, 'tree');
         }
-        // House LOD: simple box, no cone roof
-        if (counts.house > 0) {
-            makeIM(new THREE.BoxGeometry(1.6, 2.0, 1.4), matHouseLOD, 'houseLOD', counts.house, 'house');
+        // Barn LOD: single box
+        if (counts.barn > 0) {
+            makeIM(new THREE.BoxGeometry(3.0, 3.0, 2.0), matBarnLOD, 'barnLOD', counts.barn, 'barn');
         }
         // Car LOD: flat single box
         if (counts.car > 0) {
@@ -862,10 +835,6 @@ export class WorldRenderer {
         if (counts.animal > 0) {
             makeIM(new THREE.BoxGeometry(0.5, 0.4, 0.4), matAnimalLOD, 'animalLOD', counts.animal, 'animal');
         }
-        // Building LOD: same box shape, different flat material
-        if (counts.building > 0) {
-            makeIM(new THREE.BoxGeometry(2.0, 1.0, 2.0), matBuildingLOD, 'buildingLOD', counts.building, 'building');
-        }
         // Trailer park LOD: single wide flat box
         if (counts.trailer_park > 0) {
             makeIM(new THREE.BoxGeometry(6.0, 0.7, 3.0), matTrailerParkLOD, 'trailerParkLOD', counts.trailer_park, 'trailer_park');
@@ -873,10 +842,6 @@ export class WorldRenderer {
         // Stadium LOD: single squat cylinder
         if (counts.stadium > 0) {
             makeIM(new THREE.CylinderGeometry(4.5, 4.5, 2.5, 8), matStadiumLOD, 'stadiumLOD', counts.stadium, 'stadium');
-        }
-        // Bridge LOD: single long flat box
-        if (counts.bridge > 0) {
-            makeIM(new THREE.BoxGeometry(30.0, 1.0, 3.0), matBridgeLOD, 'bridgeLOD', counts.bridge, 'bridge');
         }
     }
 
@@ -902,24 +867,12 @@ export class WorldRenderer {
             im.instanceMatrix.needsUpdate = true;
         }
 
-        if (obj.type === 'house') {
-            const im = this.instancedMeshes['houseLOD']?.[0];
+        if (obj.type === 'barn') {
+            const im = this.instancedMeshes['barnLOD']?.[0];
             if (!im) return;
-            this.dummy.position.set(obj.x, baseElevation + 1.0, obj.y);
+            this.dummy.position.set(obj.x, baseElevation + 1.5, obj.y);
             this.dummy.scale.set(1, 1, 1);
             this.dummy.rotation.set(0, rotY, 0);
-            this.dummy.updateMatrix();
-            im.setMatrixAt(lodIdx, this.dummy.matrix);
-            im.instanceMatrix.needsUpdate = true;
-        }
-
-        if (obj.type === 'building') {
-            const im = this.instancedMeshes['buildingLOD']?.[0];
-            if (!im) return;
-            const heightMultiplier = 2.5 + (lodIdx % 3);
-            this.dummy.position.set(obj.x, baseElevation + (1.0 * heightMultiplier) / 2, obj.y);
-            this.dummy.scale.set(1, heightMultiplier, 1);
-            this.dummy.rotation.set(0, rotY * 0.25, 0);
             this.dummy.updateMatrix();
             im.setMatrixAt(lodIdx, this.dummy.matrix);
             im.instanceMatrix.needsUpdate = true;
@@ -969,16 +922,6 @@ export class WorldRenderer {
             im.instanceMatrix.needsUpdate = true;
         }
 
-        if (obj.type === 'bridge') {
-            const im = this.instancedMeshes['bridgeLOD']?.[0];
-            if (!im) return;
-            this.dummy.position.set(obj.x, baseElevation + 2.0, obj.y);
-            this.dummy.scale.set(1, 1, 1);
-            this.dummy.rotation.set(0, rotY, 0);
-            this.dummy.updateMatrix();
-            im.setMatrixAt(lodIdx, this.dummy.matrix);
-            im.instanceMatrix.needsUpdate = true;
-        }
     }
 
     // ============================================================
@@ -1201,38 +1144,24 @@ export class WorldRenderer {
             imFoliage.instanceMatrix.needsUpdate = true;
         }
 
-        if (obj.type === 'house') {
-            const imBase = this.instancedMeshes['house'][0];
-            const imRoof = this.instancedMeshes['houseRoof'][0];
+        if (obj.type === 'barn') {
+            const imBase = this.instancedMeshes['barnBase'][0];
+            const imRoof = this.instancedMeshes['barnRoof'][0];
             const baseElevation = this.getElevation(obj.x, obj.y);
 
-            this.dummy.position.set(obj.x, baseElevation + 0.6, obj.y);
+            this.dummy.position.set(obj.x, baseElevation + 1.0, obj.y);
             this.dummy.rotation.set(0, rotY, 0);
             this.dummy.scale.set(scale, scale, scale);
             this.dummy.updateMatrix();
             imBase.setMatrixAt(idx, this.dummy.matrix);
 
-            this.dummy.position.set(obj.x, baseElevation + 1.6, obj.y);
+            this.dummy.position.set(obj.x, baseElevation + 2.6, obj.y);
             this.dummy.rotation.set(0, rotY + Math.PI / 4, 0);
             this.dummy.updateMatrix();
             imRoof.setMatrixAt(idx, this.dummy.matrix);
 
             imBase.instanceMatrix.needsUpdate = true;
             imRoof.instanceMatrix.needsUpdate = true;
-        }
-
-        if (obj.type === 'building') {
-            const imBase = this.instancedMeshes['building'][0];
-            const baseElevation = this.getElevation(obj.x, obj.y);
-
-            // Taller buildings
-            const heightMultiplier = 2.5 + (idx % 3);
-            this.dummy.position.set(obj.x, baseElevation + (1.0 * heightMultiplier) / 2, obj.y);
-            this.dummy.scale.set(scale, scale * heightMultiplier, scale);
-            this.dummy.rotation.set(0, rotY * 0.25, 0); // clamp rotation somewhat
-            this.dummy.updateMatrix();
-            imBase.setMatrixAt(idx, this.dummy.matrix);
-            imBase.instanceMatrix.needsUpdate = true;
         }
 
         if (obj.type === 'car') {
@@ -1341,41 +1270,6 @@ export class WorldRenderer {
             imRing.instanceMatrix.needsUpdate = true;
         }
 
-        if (obj.type === 'bridge') {
-            const imDeck = this.instancedMeshes['bridgeDeck']?.[0];
-            const imP0   = this.instancedMeshes['bridgePillar0']?.[0];
-            const imP1   = this.instancedMeshes['bridgePillar1']?.[0];
-            if (!imDeck || !imP0 || !imP1) return;
-            const baseElevation = this.getElevation(obj.x, obj.y);
-
-            // Deck elevated above ground on pillars — runs along the X axis by default
-            this.dummy.position.set(obj.x, baseElevation + 2.0 * scale, obj.y);
-            this.dummy.scale.set(scale, scale, scale);
-            this.dummy.rotation.set(0, rotY, 0);
-            this.dummy.updateMatrix();
-            imDeck.setMatrixAt(idx, this.dummy.matrix);
-
-            // Pillar 0: ~1/3 along the span
-            const px0 = obj.x + Math.cos(rotY) * 9;
-            const pz0 = obj.y + Math.sin(rotY) * 9;
-            this.dummy.position.set(px0, baseElevation + 1.0 * scale, pz0);
-            this.dummy.scale.set(scale, scale, scale);
-            this.dummy.rotation.set(0, rotY, 0);
-            this.dummy.updateMatrix();
-            imP0.setMatrixAt(idx, this.dummy.matrix);
-
-            // Pillar 1: ~-1/3 along the span (other side)
-            const px1 = obj.x - Math.cos(rotY) * 9;
-            const pz1 = obj.y - Math.sin(rotY) * 9;
-            this.dummy.position.set(px1, baseElevation + 1.0 * scale, pz1);
-            this.dummy.rotation.set(0, rotY, 0);
-            this.dummy.updateMatrix();
-            imP1.setMatrixAt(idx, this.dummy.matrix);
-
-            imDeck.instanceMatrix.needsUpdate = true;
-            imP0.instanceMatrix.needsUpdate   = true;
-            imP1.instanceMatrix.needsUpdate   = true;
-        }
     }
 
     /**
@@ -1624,9 +1518,8 @@ export class WorldRenderer {
                 // Restore original non-uniform scales per mesh part
                 if      (key === 'tree')                        this.dummy.scale.set(1, 1.2, 1);
                 else if (key === 'animal' && type === 'animal') this.dummy.scale.set(1.2, 0.8, 0.8);
-                else if (key === 'building')                    this.dummy.scale.set(1, 2.5 + (index % 3), 1);
                 else                                            this.dummy.scale.set(1, 1, 1);
-                // All trailer park, stadium, and bridge parts use uniform scale (1,1,1) — handled by the else above
+                // All barn, trailer park, and stadium parts use uniform scale (1,1,1) — handled by the else above
             }
 
             this.dummy.updateMatrix();

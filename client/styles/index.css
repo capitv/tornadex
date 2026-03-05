@@ -692,17 +692,17 @@ body {
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   background: var(--bg-glass);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  padding: 12px 20px 10px;
+  padding: 8px 16px;
   border-radius: var(--radius);
   border: 1px solid var(--border-glass);
-  min-width: 260px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
 }
 
 /* Category badge */
@@ -715,7 +715,6 @@ body {
 #category-icon {
   font-size: 1.3rem;
   display: inline-block;
-  animation: spin 2.5s linear infinite;
   filter: drop-shadow(0 0 6px currentColor);
 }
 
@@ -737,7 +736,7 @@ body {
 
 /* Size bar */
 #size-bar-wrap {
-  width: 100%;
+  width: 160px;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -810,10 +809,7 @@ body {
 }
 
 #size-label {
-  font-size: 0.68rem;
-  color: var(--text-secondary);
-  letter-spacing: 1px;
-  font-weight: 600;
+  display: none;
 }
 
 /* Category-up animation */
@@ -1107,10 +1103,10 @@ body {
   }
 }
 
-/* On coarse-pointer (touch) screens the minimap sits at bottom: 175px */
+/* On coarse-pointer (touch) screens the minimap sits at bottom: 175px, height 90px */
 @media (pointer: coarse) {
   #ping-display {
-    bottom: 343px; /* 175px minimap bottom + 160px height + 8px gap */
+    bottom: 277px; /* 175px minimap bottom + 90px height + 12px gap */
   }
 }
 
@@ -1143,13 +1139,8 @@ body {
 
   #minimap-container,
   #minimap {
-    width: 110px;
-    height: 110px;
-  }
-
-  #boost-display {
-    bottom: 146px;
-    width: 110px;
+    width: 90px;
+    height: 90px;
   }
 
   #size-display {
@@ -1255,19 +1246,84 @@ body {
    overlap the joystick (bottom-left, ~168px tall) or boost button
    (bottom-right, ~110px tall). */
 @media (pointer: coarse) {
-  /* Minimap: above the joystick outer ring */
+  /* Minimap: smaller and above the joystick outer ring */
   #minimap-container {
     bottom: 175px;
+    width: 90px;
+  }
+  #minimap {
+    width: 90px;
+    height: 90px;
   }
 
-  /* Boost/stamina display: above the minimap on touch screens */
+  /* Leaderboard: compact width and smaller text on mobile */
+  #leaderboard {
+    width: 150px;
+    padding: 8px 10px;
+    top: 8px;
+    right: 8px;
+  }
+  #leaderboard h3 {
+    font-size: 0.58rem;
+    margin-bottom: 6px;
+  }
+  #leaderboard-list li {
+    font-size: 0.65rem;
+    padding: 3px 2px;
+  }
+  #leaderboard-list li .lb-score {
+    font-size: 0.65rem;
+    min-width: 28px;
+  }
+  #leaderboard-list li .lb-cat {
+    font-size: 0.52rem;
+    padding: 1px 3px;
+  }
+
+  /* Boost/stamina display: move to bottom-right above the BOOST button */
   #boost-display {
-    bottom: 355px;
+    bottom: 125px;
+    left: auto;
+    right: 16px;
+    width: 100px;
+    flex-direction: column-reverse;
+    align-items: flex-end;
+    gap: 4px;
+    pointer-events: none;
+  }
+  /* Hide the "E" keyboard hint — irrelevant on mobile */
+  #boost-key {
+    display: none;
+  }
+  #stamina-bar-wrap {
+    width: 100%;
   }
 
-  /* Size/category bar — lift so it clears the boost button */
+  /* Size/category bar — horizontal compact strip at bottom-center */
   #size-display {
-    bottom: 100px;
+    bottom: 8px;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    min-width: 0;
+    width: auto;
+  }
+  #category-icon {
+    font-size: 0.9rem;
+  }
+  #category-name {
+    font-size: 1rem;
+    letter-spacing: 2px;
+  }
+  #size-bar-wrap {
+    width: 80px;
+  }
+  #size-bar {
+    height: 6px;
+  }
+  #size-label {
+    display: none;
   }
 }
 

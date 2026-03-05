@@ -124,25 +124,6 @@ export class World {
         for (const type of types) {
             const count = OBJECT_COUNTS[type];
 
-            // ---- Bridges: place near road intersections, spanning a road ----
-            if (type === 'bridge') {
-                const roadPositions: number[] = [];
-                for (let i = 1; i <= 4; i++) roadPositions.push((WORLD_SIZE / 5) * i);
-
-                let placed = 0;
-                for (let attempt = 0; placed < count && attempt < count * 10; attempt++) {
-                    // Pick a random road X and a random Y, offset slightly off the road centre
-                    const roadX = roadPositions[Math.floor(this.rng() * roadPositions.length)];
-                    // Place within 20 units of the road centre (close enough to "span" it)
-                    const offsetX = (this.rng() - 0.5) * 20;
-                    const nx = Math.max(0, Math.min(WORLD_SIZE, roadX + offsetX));
-                    const ny = Math.max(20, Math.min(WORLD_SIZE - 20, this.rng() * WORLD_SIZE));
-                    this.objects.push(this.createObjectAt(type, nx, ny));
-                    placed++;
-                }
-                continue;
-            }
-
             // ---- Trailer parks: spawn in 5 clusters of 3 each ----
             if (type === 'trailer_park') {
                 const numClusters = 5;
@@ -171,7 +152,6 @@ export class World {
             // Determine cluster count based on type
             let numClusters = 1;
             if (type === 'tree') numClusters = 50;       // 50 forest clusters
-            else if (type === 'house') numClusters = 30; // 30 neighborhoods
             else numClusters = 10;                       // general scattered clusters
 
             for (let c = 0; c < numClusters; c++) {

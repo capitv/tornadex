@@ -492,14 +492,14 @@ export class Game {
                         ? a.radius / b.radius
                         : b.radius / a.radius;
 
-                    // Absorption only fires when the bigger tornado is >= 1.5× the size
-                    // of the smaller one AND the victim is unprotected.
+                    // Absorption fires when canAbsorb() returns true (>= 1.2× size ratio)
+                    // AND the victim is unprotected.
                     // Below that threshold the tornados repel each other instead,
                     // creating tension and bouncing between equal-sized players.
                     const REPULSE_RATIO = 1.5;
 
-                    if (a.canAbsorb(b) && !bProtected && sizeRatio >= REPULSE_RATIO) {
-                        // A absorbs B — clearly larger (>= 1.5×) and B is unprotected
+                    if (a.canAbsorb(b) && !bProtected) {
+                        // A absorbs B — clearly larger (>= 1.2×) and B is unprotected
                         pendingKills.push({ killer: a.name, victim: b.name, killerRadius: a.radius });
                         a.grow(b.score * 0.3, b.radius * 0.12);
                         b.alive = false;
@@ -511,8 +511,8 @@ export class Game {
                         if (this.onPlayerDeath) {
                             this.onPlayerDeath(b.id, a.name);
                         }
-                    } else if (b.canAbsorb(a) && !aProtected && sizeRatio >= REPULSE_RATIO) {
-                        // B absorbs A — clearly larger (>= 1.5×) and A is unprotected
+                    } else if (b.canAbsorb(a) && !aProtected) {
+                        // B absorbs A — clearly larger (>= 1.2×) and A is unprotected
                         pendingKills.push({ killer: b.name, victim: a.name, killerRadius: b.radius });
                         b.grow(a.score * 0.3, a.radius * 0.12);
                         a.alive = false;
@@ -525,11 +525,11 @@ export class Game {
                             this.onPlayerDeath(a.id, b.name);
                         }
                     } else {
-                        // Similar-sized tornados (ratio < 1.5×) OR a player is protected.
+                        // Similar-sized tornados (ratio < 1.2×) OR a player is protected.
                         // Apply size-aware repulsion:
                         //   pushStrength = 0.3 * (1 - sizeRatio / REPULSE_RATIO)
                         //   → ~0.3 when sizes are equal (ratio = 1.0)
-                        //   → ~0.0 when ratio approaches 1.5 (near-absorption threshold)
+                        //   → ~0.08 when ratio approaches 1.2 (near-absorption threshold)
                         const pushStrength = 0.3 * (1 - sizeRatio / REPULSE_RATIO);
 
                         // Push each tornado away from the other along the collision axis.

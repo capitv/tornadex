@@ -279,8 +279,7 @@ export class ParticleSystem {
                 case 'tree':
                     p.r = 0.2; p.g = 0.5 + Math.random() * 0.3; p.b = 0.15;
                     break;
-                case 'house':
-                case 'building':
+                case 'barn':
                     p.r = 0.6; p.g = 0.55; p.b = 0.5;
                     break;
                 case 'car':

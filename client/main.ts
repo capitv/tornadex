@@ -59,10 +59,33 @@ const debugOverlay = document.createElement('div');
 debugOverlay.id = 'debug-overlay';
 debugOverlay.style.cssText = `
     position: fixed; top: 8px; left: 8px; z-index: 9999;
-    background: rgba(0,0,0,0.75); color: #0f0; font: 11px monospace;
-    padding: 8px 10px; border-radius: 4px; pointer-events: none;
-    line-height: 1.5; white-space: pre; display: none; min-width: 280px;
+    background: rgba(0,0,0,0.82); color: #0f0; font: 11px monospace;
+    padding: 8px 10px 8px 10px; border-radius: 4px; pointer-events: auto;
+    line-height: 1.5; white-space: pre; display: none; min-width: 300px;
+    border: 1px solid rgba(0,255,0,0.2);
 `;
+
+// Copy button inside overlay
+const debugCopyBtn = document.createElement('button');
+debugCopyBtn.textContent = '📋 COPY';
+debugCopyBtn.style.cssText = `
+    position: absolute; top: 6px; right: 6px;
+    background: rgba(0,255,0,0.15); color: #0f0; border: 1px solid rgba(0,255,0,0.4);
+    font: 10px monospace; padding: 2px 7px; border-radius: 3px; cursor: pointer;
+`;
+debugCopyBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(debugOverlay.dataset.debugText ?? '').then(() => {
+        debugCopyBtn.textContent = '✓ COPIED';
+        setTimeout(() => { debugCopyBtn.textContent = '📋 COPY'; }, 1500);
+    });
+});
+debugOverlay.appendChild(debugCopyBtn);
+
+// Text content area (below the copy button)
+const debugText = document.createElement('div');
+debugText.style.cssText = 'margin-top: 18px;';
+debugOverlay.appendChild(debugText);
+
 document.body.appendChild(debugOverlay);
 
 let debugVisible = false;
@@ -95,6 +118,14 @@ const debugMetrics = {
     deltaCount: 0,
     fullCount: 0,
     lastPacketType: 'none' as string,
+    // Extra player info
+    radius: 0,
+    stamina: 0,
+    category: 'F0',
+    score: 0,
+    activeEffects: '',
+    // Memory
+    jsHeapMB: 0,
 };
 
 // ---- Tornado Meshes (for all players) ----
@@ -122,7 +153,7 @@ let runMaxCategory: string    = 'F0';
 // ---- Death screen tips ----
 const DEATH_TIPS: string[] = [
     'Tip: Boost into smaller tornados to absorb them instantly!',
-    'Tip: Destroy buildings for the most score and growth.',
+    'Tip: Destroy stadiums and trailer parks for the most score and growth.',
     'Tip: Stay near town centers — more objects means more food.',
     'Tip: Watch the minimap to spot incoming rivals.',
     'Tip: Higher category tornados can absorb you regardless of direction.',
@@ -366,6 +397,7 @@ function startGame(): void {
         : undefined;
     network.join(playerName, validSeed);
     isPlaying = true;
+    input.showControls();
     predictedLocal = null;
     displayPos = null;
 
@@ -408,8 +440,6 @@ function startGame(): void {
     pingInterval = setInterval(() => {
         network.measurePing();
         hudManager.updatePing(network.getPing());
-        // Refresh the F3 debug overlay on the same cadence as ping updates
-        hudManager.updateDebug(network.getBytesPerSec(), network.getPacketsPerSec());
     }, 2000);
 }
 
@@ -417,6 +447,7 @@ function respawnGame(): void {
     deathScreen.classList.add('hidden');
     deathVignette.classList.remove('active');
     hud.classList.remove('hidden');
+    input.showControls();
     network.respawn();
     interpolation.clear();
     isPlaying = true;
@@ -594,6 +625,7 @@ network.onState((state: GameState) => {
 
 network.onDeath((killerName: string) => {
     isPlaying = false;
+    input.hideControls();
 
     // Trigger dramatic vignette effect first
     deathVignette.classList.add('active');
@@ -930,24 +962,52 @@ function animate(time: number): void {
         const textures = sceneManager.renderer.info.memory.textures;
         const geometries = sceneManager.renderer.info.memory.geometries;
 
-        debugOverlay.textContent =
-            `=== DEBUG (F3) ===\n` +
-            `FPS:        ${debugMetrics.fps} (${avgDt.toFixed(1)}ms)\n` +
+        // Player state extras from server snapshot
+        const localSnap = players.get(network.id);
+        debugMetrics.radius   = localPlayerRadius;
+        debugMetrics.score    = lastScore;
+        if (localSnap) {
+            debugMetrics.stamina = (localSnap as unknown as { stamina?: number }).stamina ?? 0;
+            const fx = (localSnap as unknown as { activeEffects?: Record<string,number> }).activeEffects;
+            debugMetrics.activeEffects = fx ? (Object.keys(fx).join(', ') || 'none') : 'none';
+        }
+        // Derive category from radius
+        const r = localPlayerRadius;
+        debugMetrics.category = r < 1.5 ? 'F0' : r < 3 ? 'F1' : r < 6 ? 'F2' : r < 10 ? 'F3' : r < 16 ? 'F4' : 'F5';
+
+        // JS heap (Chrome only)
+        const perf = performance as unknown as { memory?: { usedJSHeapSize: number } };
+        debugMetrics.jsHeapMB = perf.memory ? Math.round(perf.memory.usedJSHeapSize / 1048576) : -1;
+
+        const heapStr = debugMetrics.jsHeapMB >= 0 ? `${debugMetrics.jsHeapMB} MB` : 'n/a';
+
+        const lines =
+            `=== DEBUG (F3) — ${new Date().toLocaleTimeString()} ===\n` +
+            `FPS:        ${debugMetrics.fps} (${avgDt.toFixed(1)}ms/frame)\n` +
             `Ping:       ${ping}ms\n` +
-            `Bandwidth:  ${(bps / 1024).toFixed(1)} KB/s (${pps} pkt/s)\n` +
-            `Packets:    full=${debugMetrics.fullCount} delta=${debugMetrics.deltaCount}\n` +
+            `Bandwidth:  ${(bps / 1024).toFixed(1)} KB/s  (${pps} pkt/s)\n` +
+            `Packets:    full=${debugMetrics.fullCount}  delta=${debugMetrics.deltaCount}\n` +
             `Last pkt:   ${debugMetrics.lastPacketType}\n` +
             `---\n` +
+            `Category:   ${debugMetrics.category}  radius=${debugMetrics.radius.toFixed(2)}\n` +
+            `Score:      ${Math.floor(debugMetrics.score)}\n` +
+            `Stamina:    ${debugMetrics.stamina.toFixed(0)}%\n` +
+            `Effects:    ${debugMetrics.activeEffects}\n` +
+            `---\n` +
+            `Players:    ${debugMetrics.interpPlayerCount}\n` +
             `Pending:    ${debugMetrics.pendingInputCount} inputs\n` +
             `Pred Error: ${debugMetrics.predictionError.toFixed(2)} units\n` +
-            `Display:    (${debugMetrics.displayX.toFixed(1)}, ${debugMetrics.displayY.toFixed(1)})\n` +
-            `Server:     (${debugMetrics.serverX.toFixed(1)}, ${debugMetrics.serverY.toFixed(1)})\n` +
-            `Players:    ${debugMetrics.interpPlayerCount}\n` +
+            `Pos (disp): (${debugMetrics.displayX.toFixed(1)}, ${debugMetrics.displayY.toFixed(1)})\n` +
+            `Pos (srv):  (${debugMetrics.serverX.toFixed(1)}, ${debugMetrics.serverY.toFixed(1)})\n` +
             `---\n` +
             `Draw calls: ${drawCalls}\n` +
-            `Triangles:  ${triangles}\n` +
-            `Textures:   ${textures}\n` +
-            `Geometries: ${geometries}`;
+            `Triangles:  ${triangles.toLocaleString()}\n` +
+            `Textures:   ${textures}  Geo: ${geometries}\n` +
+            `JS Heap:    ${heapStr}`;
+
+        debugText.textContent = lines;
+        // Keep textContent (used by copy) in sync
+        debugOverlay.dataset.debugText = lines;
     }
 
     // Render

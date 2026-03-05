@@ -41,7 +41,7 @@ export interface PlayerState {
     lastInputSeq: number;      // last input sequence number processed by the server
 }
 
-export type WorldObjectType = 'tree' | 'house' | 'car' | 'animal' | 'building' | 'trailer_park' | 'stadium' | 'bridge';
+export type WorldObjectType = 'tree' | 'barn' | 'car' | 'animal' | 'trailer_park' | 'stadium';
 
 export interface WorldObject {
     id: number;
@@ -213,13 +213,11 @@ export interface RoomInfo {
 // Object points and growth values
 export const OBJECT_VALUES: Record<WorldObjectType, { points: number; growth: number }> = {
     tree:         { points: 5,   growth: 0.02  },
-    house:        { points: 20,  growth: 0.05  },
+    barn:         { points: 30,  growth: 0.06  },
     car:          { points: 15,  growth: 0.04  },
     animal:       { points: 10,  growth: 0.03  },
-    building:     { points: 50,  growth: 0.10  },
     trailer_park: { points: 100, growth: 0.08  },
     stadium:      { points: 200, growth: 0.15  },
-    bridge:       { points: 150, growth: 0.10  },
 };
 
 // Object sizes (minimum tornado radius to destroy)
@@ -227,9 +225,7 @@ export const OBJECT_SIZES: Record<WorldObjectType, number> = {
     tree:         0.3,
     animal:       0.4,
     car:          0.8,
-    house:        1.2,
-    building:     2.5,
+    barn:         1.0,
     trailer_park: 3.0,
     stadium:      4.0,
-    bridge:       3.0,
 };

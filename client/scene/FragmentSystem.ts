@@ -27,8 +27,8 @@ const CONFIGS: Record<WorldObjectType, FragmentConfig> = {
         launchSpeed: 3.5, launchUpMin: 3, launchUpMax: 7,
         spinSpeed: 6, scale: 1.0,
     },
-    house: {
-        colors: [0xc8bfb0, 0xddd5c5, 0xb8a898, 0x8b4513, 0xa0522d, 0x9e9e9e],
+    barn: {
+        colors: [0x8B4513, 0xA0522D, 0xCD853F, 0x9e9e9e, 0x5c4033],
         countMin: 5, countMax: 7,
         launchSpeed: 4.0, launchUpMin: 3.5, launchUpMax: 8,
         spinSpeed: 5, scale: 1.0,
@@ -45,12 +45,6 @@ const CONFIGS: Record<WorldObjectType, FragmentConfig> = {
         launchSpeed: 3.0, launchUpMin: 2.5, launchUpMax: 6,
         spinSpeed: 5, scale: 0.9,
     },
-    building: {
-        colors: [0x7f8c8d, 0x95a5a6, 0x606c76, 0xb0b3b5, 0x4a4f52],
-        countMin: 5, countMax: 6,
-        launchSpeed: 4.5, launchUpMin: 4, launchUpMax: 10,
-        spinSpeed: 4, scale: 1.2,
-    },
     trailer_park: {
         colors: [0xd4c5a9, 0xc8b89a, 0xbfad8e, 0x9e9e9e, 0x8b8b8b],
         countMin: 6, countMax: 9,
@@ -62,12 +56,6 @@ const CONFIGS: Record<WorldObjectType, FragmentConfig> = {
         countMin: 8, countMax: 12,
         launchSpeed: 5.5, launchUpMin: 5, launchUpMax: 14,
         spinSpeed: 3, scale: 1.4,
-    },
-    bridge: {
-        colors: [0x8a8a8a, 0x969696, 0x6e6e6e, 0xb0b0b0, 0x4a4a4a],
-        countMin: 7, countMax: 10,
-        launchSpeed: 5.5, launchUpMin: 4, launchUpMax: 12,
-        spinSpeed: 4, scale: 1.3,
     },
 };
 

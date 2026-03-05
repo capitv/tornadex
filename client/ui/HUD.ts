@@ -3,7 +3,7 @@
 // ============================================
 
 import type { LeaderboardEntry, PlayerState, ActiveEffect, PowerUpType } from '../../shared/types.js';
-import { INTERP_DELAY_MS } from '../network/Interpolation.js';
+
 
 // Fujita category thresholds (radius values)
 const FUJITA: { label: string; maxRadius: number; cssVar: string }[] = [
@@ -18,7 +18,7 @@ const FUJITA: { label: string; maxRadius: number; cssVar: string }[] = [
 // Death screen tips shown at random
 const DEATH_TIPS: string[] = [
     'Tip: Boost into smaller tornados to absorb them instantly!',
-    'Tip: Destroy buildings for the most score and growth.',
+    'Tip: Destroy stadiums and trailer parks for the most score and growth.',
     'Tip: Stay near town centers — more objects means more food.',
     'Tip: Watch the minimap to spot incoming rivals.',
     'Tip: Higher category tornados can absorb you regardless of direction.',
@@ -66,13 +66,6 @@ export class HUD {
     // Local player pulse animation state
     private minimapPulse: number = 0;
 
-    // ---- Debug overlay (F3) ----
-    private debugOverlay: HTMLElement;
-    private debugVisible: boolean = false;
-    private debugBytesEl: HTMLElement;
-    private debugPacketsEl: HTMLElement;
-    private debugDelayEl: HTMLElement;
-
     constructor() {
         this.scoreEl        = document.getElementById('score-value')!;
         this.categoryName   = document.getElementById('category-name')!;
@@ -93,46 +86,6 @@ export class HUD {
         // Initialise data attribute for CSS-driven category colours
         this.sizeDisplay.dataset.cat = 'F0';
 
-        // ---- Debug overlay (F3) ----
-        this.debugOverlay  = document.createElement('div');
-        this.debugOverlay.id = 'debug-overlay';
-        // Inline styles — no CSS file change required; keeps styling self-contained.
-        Object.assign(this.debugOverlay.style, {
-            position:        'fixed',
-            top:             '8px',
-            left:            '8px',
-            padding:         '6px 10px',
-            background:      'rgba(0,0,0,0.72)',
-            color:           '#00ff88',
-            fontFamily:      'monospace',
-            fontSize:        '12px',
-            lineHeight:      '1.6',
-            borderRadius:    '4px',
-            pointerEvents:   'none',
-            zIndex:          '9999',
-            display:         'none',
-            whiteSpace:      'pre',
-            border:          '1px solid rgba(0,255,136,0.25)',
-            userSelect:      'none',
-        } as CSSStyleDeclaration);
-
-        this.debugBytesEl   = document.createElement('div');
-        this.debugPacketsEl = document.createElement('div');
-        this.debugDelayEl   = document.createElement('div');
-
-        this.debugOverlay.appendChild(this.debugBytesEl);
-        this.debugOverlay.appendChild(this.debugPacketsEl);
-        this.debugOverlay.appendChild(this.debugDelayEl);
-        document.body.appendChild(this.debugOverlay);
-
-        // F3 toggles the debug overlay
-        document.addEventListener('keydown', (e: KeyboardEvent) => {
-            if (e.key === 'F3') {
-                e.preventDefault();
-                this.debugVisible = !this.debugVisible;
-                this.debugOverlay.style.display = this.debugVisible ? 'block' : 'none';
-            }
-        });
     }
 
     setWorldSize(size: number): void {
@@ -246,21 +199,7 @@ export class HUD {
         }
     }
 
-    // ---- Debug overlay ----
-    /**
-     * Refresh the F3 debug overlay with the latest network stats.
-     * No-ops when the overlay is hidden to avoid unnecessary string allocation.
-     *
-     * @param bytesPerSec    Estimated bytes received per second.
-     * @param packetsPerSec  Game-state packets received per second.
-     */
-    updateDebug(bytesPerSec: number, packetsPerSec: number): void {
-        if (!this.debugVisible) return;
-        const kbps = (bytesPerSec / 1024).toFixed(1);
-        this.debugBytesEl.textContent   = `Bandwidth:  ${kbps} KB/s  (${bytesPerSec} B/s)`;
-        this.debugPacketsEl.textContent = `Packets:    ${packetsPerSec} pkt/s`;
-        this.debugDelayEl.textContent   = `Interp lag: ${INTERP_DELAY_MS} ms`;
-    }
+    // Debug overlay is handled entirely by main.ts (F3 key)
 
     // ---- Leaderboard ----
     updateLeaderboard(entries: LeaderboardEntry[], localName: string): void {

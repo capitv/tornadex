@@ -45,6 +45,9 @@ export class InputHandler {
     private readonly OUTER_RADIUS = 60;  // half of 120px outer ring
     private readonly THUMB_RADIUS = 25;  // half of 50px thumb
 
+    // When false, touch events pass through to the page (home screen buttons work)
+    private gameActive: boolean = false;
+
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
 
@@ -87,6 +90,23 @@ export class InputHandler {
         this.joystickOuter = outer;
         this.joystickThumb = thumb;
         this.boostBtn = boost;
+
+        // Hide until the game actually starts (prevents overlap with home screen)
+        this.hideControls();
+    }
+
+    /** Show mobile joystick + boost button (call when game starts). */
+    showControls(): void {
+        this.gameActive = true;
+        if (this.joystickOuter) this.joystickOuter.style.display = '';
+        if (this.boostBtn) this.boostBtn.style.display = '';
+    }
+
+    /** Hide mobile joystick + boost button (call on home/death screen). */
+    hideControls(): void {
+        this.gameActive = false;
+        if (this.joystickOuter) this.joystickOuter.style.display = 'none';
+        if (this.boostBtn) this.boostBtn.style.display = 'none';
     }
 
     // ------------------------------------------------------------------
@@ -142,6 +162,8 @@ export class InputHandler {
     // ------------------------------------------------------------------
 
     private onTouchStart(e: TouchEvent): void {
+        // When game is not active, let touches pass through to page UI (play button, inputs)
+        if (!this.gameActive) return;
         e.preventDefault();
 
         for (let i = 0; i < e.changedTouches.length; i++) {
@@ -179,6 +201,7 @@ export class InputHandler {
     }
 
     private onTouchMove(e: TouchEvent): void {
+        if (!this.gameActive) return;
         e.preventDefault();
 
         for (let i = 0; i < e.changedTouches.length; i++) {
@@ -191,6 +214,7 @@ export class InputHandler {
     }
 
     private onTouchEnd(e: TouchEvent): void {
+        if (!this.gameActive) return;
         e.preventDefault();
 
         for (let i = 0; i < e.changedTouches.length; i++) {
