@@ -1489,7 +1489,8 @@ export class WorldRenderer {
             if (this._suctionStrength.size > 0) {
                 for (const [id, prevStrength] of this._suctionStrength) {
                     if (prevStrength > 0.001) {
-                        this._restoreObjectMatrix(id);
+                        const lvl = this.objectLodLevel.get(id) ?? 'detail';
+                        if (lvl === 'detail') this._restoreObjectMatrix(id);
                     }
                 }
                 this._suctionStrength.clear();
@@ -1523,6 +1524,10 @@ export class WorldRenderer {
 
         for (const id of candidateIds) {
             if (this.currentlyHidden.has(id)) continue;
+            // Only apply suction to objects currently shown as full detail geometry.
+            // LOD (billboard) and hidden objects must not have their detail mesh restored.
+            const lodLevel = this.objectLodLevel.get(id) ?? 'detail';
+            if (lodLevel !== 'detail') continue;
 
             const inst = this.objectInstances.get(id);
             if (!inst) continue;
@@ -1636,7 +1641,9 @@ export class WorldRenderer {
         // Restore objects that were affected last frame but are no longer
         for (const [id, strength] of this._suctionStrength) {
             if (strength > 0.001 && !affectedThisFrame.has(id)) {
-                this._restoreObjectMatrix(id);
+                // Only restore detail mesh if the object is still in 'detail' LOD level
+                const lvl = this.objectLodLevel.get(id) ?? 'detail';
+                if (lvl === 'detail') this._restoreObjectMatrix(id);
                 this._suctionStrength.set(id, 0);
             }
         }
