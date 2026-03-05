@@ -47,11 +47,11 @@ export const OBJECT_RESPAWN_TICKS = TICK_RATE * 30; // 30 seconds
 // World object counts
 export const OBJECT_COUNTS = {
     tree:         8000,  // Dense forests
-    barn:         3,     // Scattered barns
-    car:          150,   // Some traffic
-    animal:       200,   // Wildlife
-    trailer_park: 15,    // Rare high-value clusters
-    stadium:      5,     // Very rare arena structures
+    barn:         0,
+    car:           0,
+    animal:        0,
+    trailer_park:  0,
+    stadium:       0,
 };
 
 // Spatial grid cell size

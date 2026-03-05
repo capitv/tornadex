@@ -23,17 +23,16 @@ const TYPE_COLORS: Record<string, number[]> = {
 // Objects between LOD_NEAR_DISTANCE and LOD_FAR_DISTANCE use simplified geometry.
 // Objects beyond LOD_FAR_DISTANCE are hidden (scene fog handles the pop).
 // Note: these are now stored as instance variables — see WorldRenderer class body.
-const DEFAULT_LOD_NEAR = 300;
-const DEFAULT_LOD_FAR  = 600;
+const DEFAULT_LOD_NEAR = 150;
+const DEFAULT_LOD_FAR  = 350;
 
 // ---- Tree-specific LOD thresholds ----
 // Trees are the most numerous object (~8000) and use aggressive LOD to cut triangles.
 // Close (0-TREE_LOD_NEAR): full 3D geometry (trunk + foliage sphere)
 // Medium (TREE_LOD_NEAR - TREE_LOD_FAR): billboard sprite (2 triangles, camera-facing)
 // Far (TREE_LOD_FAR+): culled entirely
-// A small transition band softens the pop between levels.
-const DEFAULT_TREE_LOD_NEAR = 80;
-const DEFAULT_TREE_LOD_FAR  = 200;
+const DEFAULT_TREE_LOD_NEAR = 40;
+const DEFAULT_TREE_LOD_FAR  = 120;
 const TREE_LOD_TRANSITION   = 5; // units of overlap for smooth fade (unused for now, reserved)
 
 // Run LOD + frustum check every N frames to amortise CPU cost across frames
