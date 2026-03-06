@@ -32,6 +32,8 @@ export class Player {
     prevY: number = 0;
     radius: number;
     rotation: number = 0;
+    /** Used by SpatialGrid for allocation-free dedup. */
+    _queryGen?: number;
     score: number = 0;
     velocityX: number = 0;
     velocityY: number = 0;
@@ -310,37 +312,41 @@ export class Player {
         this.posHistoryHead = 0;
     }
 
+    // Pre-allocated state object reused every tick (avoid per-tick allocation)
+    private _cachedState: PlayerState = {
+        id: '', name: '', x: 0, y: 0, radius: 0, rotation: 0,
+        score: 0, velocityX: 0, velocityY: 0, alive: true,
+        stamina: 100, activeEffects: [], protected: false, afk: false, lastInputSeq: 0,
+    };
+    private _cachedEffects: ActiveEffect[] = [];
+
     toState(now?: number): PlayerState {
-        // Convert the internal Map into a flat array for the network payload.
-        // Each entry carries the effect type and how many ticks (≈ seconds × TICK_RATE)
-        // remain so the client can display accurate countdown timers.
-        const activeEffects: ActiveEffect[] = [];
+        // Reuse cached effects array — truncate and refill
+        const effects = this._cachedEffects;
+        effects.length = 0;
         for (const [type, expiry] of this.activeEffects) {
             if (this.tickCount < expiry) {
-                activeEffects.push({ type, expiresAt: expiry - this.tickCount });
+                effects.push({ type, expiresAt: expiry - this.tickCount });
             }
         }
 
-        return {
-            id: this.id,
-            name: this.name,
-            x: this.x,
-            y: this.y,
-            radius: this.radius,
-            rotation: this.rotation,
-            score: this.score,
-            velocityX: this.velocityX,
-            velocityY: this.velocityY,
-            alive: this.alive,
-            stamina: this.stamina,
-            activeEffects,
-            // Protected when spawn invulnerability is active OR the shield power-up is active.
-            // The safe-zone check is done in Game.ts; the client only needs the boolean.
-            protected: this.isSpawnProtected(now) || this.hasEffect('shield'),
-            // AFK flag — true once idle ticks exceed 60 (~3 seconds); resets on any input.
-            afk: this.idleTicks > 60,
-            // Echo back the last processed input sequence for client-side reconciliation.
-            lastInputSeq: this.lastInputSeq,
-        };
+        // Mutate pre-allocated state object (caller must not hold references across ticks)
+        const s = this._cachedState;
+        s.id = this.id;
+        s.name = this.name;
+        s.x = this.x;
+        s.y = this.y;
+        s.radius = this.radius;
+        s.rotation = this.rotation;
+        s.score = this.score;
+        s.velocityX = this.velocityX;
+        s.velocityY = this.velocityY;
+        s.alive = this.alive;
+        s.stamina = this.stamina;
+        s.activeEffects = effects;
+        s.protected = this.isSpawnProtected(now) || this.hasEffect('shield');
+        s.afk = this.idleTicks > 60;
+        s.lastInputSeq = this.lastInputSeq;
+        return s;
     }
 }

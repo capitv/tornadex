@@ -57,7 +57,10 @@ export class SpatialGrid {
 
     /** Clear only the dynamic cells (called every tick). */
     clear(): void {
-        this.cells.clear();
+        // Truncate cell arrays instead of deleting keys — avoids Map rehashing.
+        for (const arr of this.cells.values()) {
+            arr.length = 0;
+        }
     }
 
     /** Insert a dynamic entity (players — rebuilt every tick). */

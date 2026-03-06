@@ -399,15 +399,11 @@ export class Game {
         // every tick. Static world objects use a separate grid rebuilt only when dirty.
         this.grid.clear();
 
-        // Insert players (dynamic)
+        // Insert players (dynamic) — players implement SpatialEntity directly,
+        // no wrapper object needed (avoids 20-50 allocations per tick).
         for (const player of this.players.values()) {
             if (!player.alive) continue;
-            this.grid.insert({
-                id: player.id,
-                x: player.x,
-                y: player.y,
-                radius: player.radius,
-            });
+            this.grid.insert(player);
         }
 
         // Static world objects — the grid only rebuilds its internal static cells
@@ -440,14 +436,14 @@ export class Game {
 
             player.update(dt, speedMult, now);
 
-            // ---- Power-up collection ----
+            // ---- Power-up collection (squared distance — no sqrt) ----
             for (const pu of this.world.powerUps) {
                 if (!pu.active) continue;
                 const pDx = player.x - pu.x;
                 const pDy = player.y - pu.y;
-                const pDist = Math.sqrt(pDx * pDx + pDy * pDy);
-                // Collection radius = tornado radius + constant pick-up buffer
-                if (pDist < player.radius + POWERUP_COLLECT_RADIUS) {
+                const pDistSq = pDx * pDx + pDy * pDy;
+                const pCollR = player.radius + POWERUP_COLLECT_RADIUS;
+                if (pDistSq < pCollR * pCollR) {
                     player.applyPowerUp(pu.type);
                     this.world.collectPowerUp(pu);
                     logger.debug(`${player.name} collected power-up: ${pu.type}`);
@@ -468,15 +464,15 @@ export class Game {
 
                     const dx = player.x - obj.x;
                     const dy = player.y - obj.y;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const distSq = dx * dx + dy * dy;
 
                     // Can destroy if tornado radius is big enough and close enough.
-                    // Collision zone scales quadratically to match the visual funnel width:
-                    // small tornadoes (r<2) use a tight radius, large ones expand dramatically.
+                    // Collision zone scales quadratically to match the visual funnel width.
                     const collisionR = player.radius < 2
                         ? player.radius * 1.8
                         : player.radius * 1.8 + (player.radius - 2) * (player.radius - 2) * 0.5;
-                    if (player.radius >= obj.size && dist < collisionR + obj.size) {
+                    const totalR = collisionR + obj.size;
+                    if (player.radius >= obj.size && distSq < totalR * totalR) {
                         this.world.destroyObject(obj);
                         const values = OBJECT_VALUES[obj.type];
                         // Rapid Growth power-up doubles radius gain from destroyed objects
@@ -629,12 +625,13 @@ export class Game {
 
                 const vDx = player.x - vehicle.x;
                 const vDy = player.y - vehicle.y;
-                const vDist = Math.sqrt(vDx * vDx + vDy * vDy);
+                const vDistSq = vDx * vDx + vDy * vDy;
 
                 const vCollR = player.radius < 2
                     ? player.radius * 1.8
                     : player.radius * 1.8 + (player.radius - 2) * (player.radius - 2) * 0.5;
-                if (vDist < vCollR + VEHICLE_COLLISION_RADIUS) {
+                const vTotalR = vCollR + VEHICLE_COLLISION_RADIUS;
+                if (vDistSq < vTotalR * vTotalR) {
                     this.world.destroyVehicle(vehicle);
                     const growthMult = player.hasEffect('growth') ? GROWTH_BOOST_MULTIPLIER : 1.0;
                     player.grow(VEHICLE_POINTS, VEHICLE_GROWTH * growthMult);
@@ -656,7 +653,7 @@ export class Game {
         }
 
         // ---- AFK session timeout (5 minutes without input) ----
-        const afkNow = Date.now();
+        const afkNow = now;
         for (const [playerId, lastTime] of this.lastInputTime) {
             // Skip bots — they don't send input via sockets
             if (playerId.startsWith('bot_')) continue;
