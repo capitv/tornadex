@@ -506,22 +506,29 @@ export class Game {
                 const a = playerArray[i];
                 const b = playerArray[j];
 
-                // ---- Lag-compensated distance check for PvP absorption ----
-                // For each player acting as the attacker, compute where the
-                // *victim* was at the time the attacker's input was generated
-                // (now - attacker.rtt / 2). This makes what the attacker saw
-                // on their screen match what the server checks.
-                // Clamp rewind to 200ms max to prevent abuse.
-                const aRewind = Math.min(a.rtt * 0.5, 200);
-                const bRewind = Math.min(b.rtt * 0.5, 200);
+                // ---- Swept collision: find minimum distance during this tick ----
+                // Two moving points: A went from prevA→A, B went from prevB→B.
+                // Relative displacement: P = prevA - prevB, V = (A-prevA) - (B-prevB)
+                // dist²(t) = |P + tV|² is quadratic in t ∈ [0,1]
+                // Minimum at t* = -dot(P,V)/dot(V,V), clamped to [0,1]
+                const px = a.prevX - b.prevX;
+                const py = a.prevY - b.prevY;
+                const vx = (a.x - a.prevX) - (b.x - b.prevX);
+                const vy = (a.y - a.prevY) - (b.y - b.prevY);
+                const vDotV = vx * vx + vy * vy;
+                let dist: number;
+                if (vDotV < 0.0001) {
+                    dist = a.distanceTo(b);
+                } else {
+                    const tMin = Math.max(0, Math.min(1, -(px * vx + py * vy) / vDotV));
+                    const cx = px + tMin * vx;
+                    const cy = py + tMin * vy;
+                    dist = Math.sqrt(cx * cx + cy * cy);
+                    // Also check end-of-tick distance
+                    const distNow = a.distanceTo(b);
+                    if (distNow < dist) dist = distNow;
+                }
 
-                // B's position as seen by A (rewound by A's half-RTT)
-                const bForA = aRewind > 0 ? b.getPositionAt(now - aRewind) : b;
-                // A's position as seen by B (rewound by B's half-RTT)
-                const aForB = bRewind > 0 ? a.getPositionAt(now - bRewind) : a;
-
-                // Current-position distance check for proximity (repulsion, suction range)
-                const dist = a.distanceTo(b);
                 const touchDist = a.radius + b.radius;
 
                 // Scale absorption range with tornado size — larger tornadoes have wider suction
@@ -554,45 +561,31 @@ export class Game {
                     // creating tension and bouncing between equal-sized players.
                     const REPULSE_RATIO = 1.5;
 
-                    // Lag-compensated absorption: use the victim's rewound position
-                    // for the distance check, so the attacker's view is authoritative.
+                    // Swept collision already confirmed proximity during this tick.
+                    // No inner distance re-check needed.
                     if (a.canAbsorb(b) && !bProtected) {
-                        // A is attacker — check distance to B's lag-compensated position
-                        const dxLC = a.x - bForA.x;
-                        const dyLC = a.y - bForA.y;
-                        const distLC = Math.sqrt(dxLC * dxLC + dyLC * dyLC);
-                        const touchDistLC = a.radius + bForA.radius;
-                        if (distLC < touchDistLC * absorbMult) {
-                            // A absorbs B — clearly larger (>= 1.1×) and B is unprotected
-                            pendingKills.push({ killer: a.name, victim: b.name, killerRadius: a.radius });
-                            a.grow(b.score * 0.3, b.radius * 0.12);
-                            b.alive = false;
-                            this.absorbedThisTick.add(b.id);
-                            this.objectsDestroyedByPlayer.set(a.id, true);
-                            this.submitToLeaderboard(b);
-                            this.botManager.notifyBotDied(b.id);
-                            if (this.onPlayerDeath) {
-                                this.onPlayerDeath(b.id, a.name);
-                            }
+                        // A absorbs B — clearly larger (>= 1.1×) and B is unprotected
+                        pendingKills.push({ killer: a.name, victim: b.name, killerRadius: a.radius });
+                        a.grow(b.score * 0.3, b.radius * 0.12);
+                        b.alive = false;
+                        this.absorbedThisTick.add(b.id);
+                        this.objectsDestroyedByPlayer.set(a.id, true);
+                        this.submitToLeaderboard(b);
+                        this.botManager.notifyBotDied(b.id);
+                        if (this.onPlayerDeath) {
+                            this.onPlayerDeath(b.id, a.name);
                         }
                     } else if (b.canAbsorb(a) && !aProtected) {
-                        // B is attacker — check distance to A's lag-compensated position
-                        const dxLC = b.x - aForB.x;
-                        const dyLC = b.y - aForB.y;
-                        const distLC = Math.sqrt(dxLC * dxLC + dyLC * dyLC);
-                        const touchDistLC = b.radius + aForB.radius;
-                        if (distLC < touchDistLC * absorbMult) {
-                            // B absorbs A — clearly larger (>= 1.1×) and A is unprotected
-                            pendingKills.push({ killer: b.name, victim: a.name, killerRadius: b.radius });
-                            b.grow(a.score * 0.3, a.radius * 0.12);
-                            a.alive = false;
-                            this.absorbedThisTick.add(a.id);
-                            this.objectsDestroyedByPlayer.set(b.id, true);
-                            this.submitToLeaderboard(a);
-                            this.botManager.notifyBotDied(a.id);
-                            if (this.onPlayerDeath) {
-                                this.onPlayerDeath(a.id, b.name);
-                            }
+                        // B absorbs A — clearly larger (>= 1.1×) and A is unprotected
+                        pendingKills.push({ killer: b.name, victim: a.name, killerRadius: b.radius });
+                        b.grow(a.score * 0.3, a.radius * 0.12);
+                        a.alive = false;
+                        this.absorbedThisTick.add(a.id);
+                        this.objectsDestroyedByPlayer.set(b.id, true);
+                        this.submitToLeaderboard(a);
+                        this.botManager.notifyBotDied(a.id);
+                        if (this.onPlayerDeath) {
+                            this.onPlayerDeath(a.id, b.name);
                         }
                     } else {
                         // Similar-sized tornados (ratio < 1.1×) OR a player is protected.

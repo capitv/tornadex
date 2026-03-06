@@ -27,6 +27,9 @@ export class Player {
     name: string;
     x: number;
     y: number;
+    /** Position at the start of the current tick (before update). */
+    prevX: number = 0;
+    prevY: number = 0;
     radius: number;
     rotation: number = 0;
     score: number = 0;
@@ -67,6 +70,8 @@ export class Player {
         const margin = WORLD_SIZE * 0.1;
         this.x = margin + Math.random() * (WORLD_SIZE - margin * 2);
         this.y = margin + Math.random() * (WORLD_SIZE - margin * 2);
+        this.prevX = this.x;
+        this.prevY = this.y;
 
         // Grant spawn protection immediately on creation
         this.spawnProtectedUntil = Date.now() + SPAWN_PROTECTION_MS;
@@ -102,6 +107,10 @@ export class Player {
 
     update(dt: number, speedMultiplier: number = 1, now: number = Date.now()): void {
         if (!this.alive) return;
+
+        // Save position before movement for swept collision detection
+        this.prevX = this.x;
+        this.prevY = this.y;
 
         this.tickCount++;
 
