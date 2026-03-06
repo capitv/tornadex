@@ -2,7 +2,7 @@
 // Game Loop - Core Server Game Logic
 // ============================================
 
-import { GameState, PlayerState, DeltaGameState, DeltaPlayerState, LeaderboardEntry, KillEvent, OBJECT_VALUES, NpcVehicle, PowerUp } from '../shared/types.js';
+import { GameState, PlayerState, DeltaGameState, DeltaPlayerState, LeaderboardEntry, KillEvent, OBJECT_VALUES, NpcVehicle, PowerUp, ActiveEffect } from '../shared/types.js';
 import { Player } from './Player.js';
 import { World } from './World.js';
 import { SpatialGrid } from './SpatialGrid.js';
@@ -73,8 +73,8 @@ export class Game {
     // ---- Delta compression state ----
     /** Per-player snapshot of the last full state sent. Keyed by socket ID. */
     private previousPlayerStates: Map<string, Map<string, PlayerState>> = new Map();
-    /** Per-player snapshot of the last leaderboard sent. Keyed by socket ID. */
-    private previousLeaderboards: Map<string, LeaderboardEntry[]> = new Map();
+    /** Per-player JSON string of the last leaderboard sent. Keyed by socket ID. */
+    private previousLeaderboardJson: Map<string, string> = new Map();
     /** Per-player snapshot of the last powerUps array sent. Keyed by socket ID. */
     private previousPowerUps: Map<string, string> = new Map(); // JSON string for fast compare
     /** Per-player snapshot of the last vehicles array sent. Keyed by socket ID. */
@@ -105,6 +105,8 @@ export class Game {
 
     // ---- Pre-allocated leaderboard sort buffer ----
     private _leaderboardSortBuf: Player[] = [];
+    // ---- Pre-allocated empty activeEffects array (shared, never mutated) ----
+    private static readonly _emptyEffects: ActiveEffect[] = [];
 
     constructor(seed: number) {
         this.world = new World(seed);
@@ -186,7 +188,7 @@ export class Game {
 
         // Initialize delta state for this player
         this.previousPlayerStates.set(id, new Map());
-        this.previousLeaderboards.set(id, []);
+        this.previousLeaderboardJson.set(id, '');
         this.previousPowerUps.set(id, '');
         this.previousVehicles.set(id, '');
         this.acknowledgedDestroyedIds.set(id, new Set());
@@ -220,7 +222,7 @@ export class Game {
 
             // Clean up delta state for this player
             this.previousPlayerStates.delete(id);
-            this.previousLeaderboards.delete(id);
+            this.previousLeaderboardJson.delete(id);
             this.previousPowerUps.delete(id);
             this.previousVehicles.delete(id);
             this.acknowledgedDestroyedIds.delete(id);
@@ -342,14 +344,14 @@ export class Game {
 
         // Move delta state to the new socket ID (reset so next send is a full keyframe)
         this.previousPlayerStates.delete(oldSocketId);
-        this.previousLeaderboards.delete(oldSocketId);
+        this.previousLeaderboardJson.delete(oldSocketId);
         this.previousPowerUps.delete(oldSocketId);
         this.previousVehicles.delete(oldSocketId);
         this.acknowledgedDestroyedIds.delete(oldSocketId);
         this.playerSentTicks.delete(oldSocketId);
 
         this.previousPlayerStates.set(newSocketId, new Map());
-        this.previousLeaderboards.set(newSocketId, []);
+        this.previousLeaderboardJson.set(newSocketId, '');
         this.previousPowerUps.set(newSocketId, '');
         this.previousVehicles.set(newSocketId, '');
         this.acknowledgedDestroyedIds.set(newSocketId, new Set());
@@ -857,7 +859,7 @@ export class Game {
             velocityX: 0,
             velocityY: 0,
             stamina: 0,
-            activeEffects: [],
+            activeEffects: Game._emptyEffects,
             afk: state.afk,
             lastInputSeq: state.lastInputSeq,
         };
@@ -878,7 +880,7 @@ export class Game {
         pendingKills: KillEvent[],
     ): DeltaGameState {
         const prevStates   = this.previousPlayerStates.get(viewerId)!;
-        const prevLB       = this.previousLeaderboards.get(viewerId)!;
+        const prevLB       = this.previousLeaderboardJson.get(viewerId)!;
         const prevPUJson   = this.previousPowerUps.get(viewerId)!;
         const prevVehJson  = this.previousVehicles.get(viewerId)!;
         const ackedIds     = this.acknowledgedDestroyedIds.get(viewerId)!;
@@ -924,11 +926,12 @@ export class Game {
                 if (cur.stamina       !== prev.stamina)        dp.stamina       = cur.stamina;
                 if (cur.protected     !== prev.protected)      dp.protected     = cur.protected;
                 if (cur.afk           !== prev.afk)            dp.afk           = cur.afk;
-                // activeEffects: compare by serialised length + content
-                const curEffJson = JSON.stringify(cur.activeEffects);
-                const prevEffJson = JSON.stringify(prev.activeEffects);
-                if (curEffJson !== prevEffJson) {
-                    dp.activeEffects = cur.activeEffects;
+                // activeEffects: compare by length + content (avoid JSON.stringify)
+                const curEff = cur.activeEffects;
+                const prevEff = prev.activeEffects;
+                if (curEff.length !== prevEff.length ||
+                    curEff.some((e, i) => e.type !== prevEff[i].type || e.expiresAt !== prevEff[i].expiresAt)) {
+                    dp.activeEffects = curEff;
                 }
                 deltaPlayers.push(dp);
             }
@@ -944,10 +947,9 @@ export class Game {
             }
         }
 
-        // ---- Leaderboard: only send when changed (use pre-cached JSON) ----
+        // ---- Leaderboard: only send when changed (pre-cached JSON vs cached baseline) ----
         const curLBJson = this._cachedLeaderboardJson;
-        const prevLBJson = JSON.stringify(prevLB);
-        const leaderboardDelta = curLBJson !== prevLBJson ? currentLeaderboard : undefined;
+        const leaderboardDelta = curLBJson !== prevLB ? currentLeaderboard : undefined;
 
         // ---- PowerUps: only send when changed (use pre-cached JSON) ----
         const curPUJson = this._cachedPowerUpsJson;
@@ -1010,14 +1012,13 @@ export class Game {
         }
         // Remove players no longer in the filtered list (only if the map grew)
         if (prevStates.size > currentIds.length) {
-            const currentIdSet = new Set(currentIds);
             for (const id of prevStates.keys()) {
-                if (!currentIdSet.has(id)) prevStates.delete(id);
+                if (!currentIds.includes(id)) prevStates.delete(id);
             }
         }
 
-        // Update leaderboard baseline
-        this.previousLeaderboards.set(viewerId, currentLeaderboard);
+        // Update leaderboard baseline — reuse the pre-cached JSON string
+        this.previousLeaderboardJson.set(viewerId, this._cachedLeaderboardJson);
 
         // Update power-ups baseline — reuse the pre-cached JSON string
         this.previousPowerUps.set(viewerId, this._cachedPowerUpsJson);

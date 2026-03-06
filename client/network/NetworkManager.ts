@@ -36,6 +36,9 @@ export class NetworkManager {
      * Kept in sync with cachedFullState.players for O(1) player lookups during merge.
      */
     private cachedPlayerMap: Map<string, PlayerState> = new Map();
+    // Pre-allocated reusable containers for applyDelta (avoid per-tick allocations)
+    private _deltaMap: Map<string, DeltaPlayerState> = new Map();
+    private _seenIds: Set<string> = new Set();
 
     playerId: string = '';
     /** The last name passed to join(). Used to re-join automatically after reconnect. */
@@ -351,17 +354,16 @@ export class NetworkManager {
      */
     private applyDelta(prev: GameState, delta: DeltaGameState): GameState {
         // ---- Players ----
-        // Build a map of incoming delta players keyed by id for O(1) lookup
-        const deltaMap = new Map<string, DeltaPlayerState>();
+        // Reuse pre-allocated containers (cleared, not re-allocated)
+        const deltaMap = this._deltaMap;
+        deltaMap.clear();
         for (const dp of delta.players) {
             deltaMap.set(dp.id, dp);
         }
 
-        // Merge delta fields onto previously-known player states.
-        // Players absent from the delta entirely are kept as-is (network throttle
-        // may have omitted them due to distance — they haven't disconnected).
         const mergedPlayers: PlayerState[] = [];
-        const seenIds = new Set<string>();
+        const seenIds = this._seenIds;
+        seenIds.clear();
 
         for (const prevPlayer of prev.players) {
             seenIds.add(prevPlayer.id);
@@ -386,14 +388,15 @@ export class NetworkManager {
         // ---- Destroyed IDs ----
         // Append new destructions directly — no Set conversion needed since
         // the server only sends each ID once via newDestroyedObjectIds.
-        let destroyedObjectIds = prev.destroyedObjectIds;
+        const destroyedObjectIds = prev.destroyedObjectIds;
         if (delta.newDestroyedObjectIds && delta.newDestroyedObjectIds.length > 0) {
-            // Shallow copy + push to avoid mutating the previous state
-            destroyedObjectIds = prev.destroyedObjectIds.concat(delta.newDestroyedObjectIds);
+            // Push directly — we own this array (reconstructed state, not shared)
+            for (const id of delta.newDestroyedObjectIds) {
+                destroyedObjectIds.push(id);
+            }
         }
 
-        // Update the cached player map for future delta merges
-        this.cachedPlayerMap.clear();
+        // Update the cached player map (set overwrites, no need to clear if same keys)
         for (const p of mergedPlayers) {
             this.cachedPlayerMap.set(p.id, p);
         }
