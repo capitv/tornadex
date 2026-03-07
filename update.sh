@@ -38,12 +38,14 @@ npx tsc -p tsconfig.server.json
 
 # ---- Reiniciar servidor via PM2 ----
 echo ""
-echo ">>> Reiniciando servidor..."
+echo ">>> Parando servidor..."
 pm2 stop "$APP_NAME" 2>/dev/null || true
-# Kill any process holding port 3001 to avoid EADDRINUSE
-sudo fuser -k 3001/tcp 2>/dev/null || true
-sleep 1
-pm2 start "$APP_NAME"
+pm2 delete "$APP_NAME" 2>/dev/null || true
+# Kill any process still holding port 3001
+fuser -k 3001/tcp 2>/dev/null || true
+sleep 2
+echo ">>> Iniciando servidor..."
+pm2 start server/index.ts --name "$APP_NAME" --interpreter node --node-args="--import tsx/esm"
 
 echo ""
 echo "============================================"
