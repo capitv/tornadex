@@ -41,11 +41,12 @@ echo ""
 echo ">>> Parando servidor..."
 pm2 stop "$APP_NAME" 2>/dev/null || true
 pm2 delete "$APP_NAME" 2>/dev/null || true
-# Kill any process still holding port 3001
-fuser -k 3001/tcp 2>/dev/null || true
+# Also clean up any root-owned PM2 process on the same name/port
+sudo pm2 delete "$APP_NAME" 2>/dev/null || true
+sudo kill -9 $(sudo lsof -t -i:3001) 2>/dev/null || true
 sleep 2
 echo ">>> Iniciando servidor..."
-pm2 start server/index.ts --name "$APP_NAME" --interpreter node --node-args="--import tsx/esm"
+pm2 start server/index.ts --name "$APP_NAME" --interpreter node --node-args="--import tsx/esm" --restart-delay=3000
 
 echo ""
 echo "============================================"
