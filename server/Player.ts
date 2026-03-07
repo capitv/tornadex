@@ -184,16 +184,15 @@ export class Player {
         }
 
         // Active size decay — larger tornados naturally lose radius over time even while moving.
-        // This prevents F4/F5 tornados from staying giant forever.
-        // Tiered decay: gentle below r=4 (F2), aggressive above r=6 (F3+).
+        // Gentle below F3, noticeable at F4+. Players can still progress if actively eating.
         if (this.radius > 2.0) {
             let decayRate: number;
             if (this.radius > 6.0) {
-                // F3+ severe decay — quadratic scaling punishes giant tornados hard
-                decayRate = (this.radius - 2.0) * 0.003 + (this.radius - 6.0) * (this.radius - 6.0) * 0.0005;
+                // F3+ moderate decay — big tornados shrink but not impossibly fast
+                decayRate = (this.radius - 2.0) * 0.0012 + (this.radius - 6.0) * 0.0003;
             } else {
-                // F1-F2 gentle decay
-                decayRate = (this.radius - 2.0) * 0.0012;
+                // F1-F2 very gentle decay
+                decayRate = (this.radius - 2.0) * 0.0005;
             }
             this.radius = Math.max(PLAYER_MIN_RADIUS, this.radius - decayRate);
         }
