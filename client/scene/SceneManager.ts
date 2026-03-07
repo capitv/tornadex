@@ -148,11 +148,14 @@ export class SceneManager {
         // Allow higher scale capping so F5 can actually zoom out fully
         const clampedR = Math.min(radius, 25);
 
+        // Portrait (vertical) screens: zoom in more since horizontal FOV is narrower
+        const portraitScale = this.camera.aspect < 1 ? 0.75 : 1.0;
+
         // dist: Starts at 30, grows logarithmically early on, then aggressively linearly for huge wedges
-        const dist = 30 + Math.log2(1 + clampedR) * 10 + (clampedR > 2 ? (clampedR - 2) * 15 : 0);
+        const dist = (30 + Math.log2(1 + clampedR) * 10 + (clampedR > 2 ? (clampedR - 2) * 15 : 0)) * portraitScale;
 
         // height: Must grow aggressively for large tornados so we look DOWN at them, avoiding cloud clipping
-        const height = 9 + Math.log2(1 + clampedR) * 6 + (clampedR > 2 ? (clampedR - 2) * 12 : 0);
+        const height = (9 + Math.log2(1 + clampedR) * 6 + (clampedR > 2 ? (clampedR - 2) * 12 : 0)) * portraitScale;
 
         this._targetPos.set(
             x - dist * 0.15,
