@@ -39,7 +39,11 @@ npx tsc -p tsconfig.server.json
 # ---- Reiniciar servidor via PM2 ----
 echo ""
 echo ">>> Reiniciando servidor..."
-pm2 restart "$APP_NAME"
+pm2 stop "$APP_NAME" 2>/dev/null || true
+# Kill any process holding port 3001 to avoid EADDRINUSE
+sudo fuser -k 3001/tcp 2>/dev/null || true
+sleep 1
+pm2 start "$APP_NAME"
 
 echo ""
 echo "============================================"
