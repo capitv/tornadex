@@ -98,6 +98,9 @@ export class Game {
     private _cachedLeaderboardJson: string = '';
     private _cachedPowerUpsJson: string = '';
     private _cachedVehiclesJson: string = '';
+    // ---- Pre-allocated reusable arrays for buildDelta (avoid per-viewer per-tick allocations) ----
+    private _deltaPlayers: DeltaPlayerState[] = [];
+    private _newDestroyedIds: number[] = [];
 
     // ---- Class-level safeZoneCache (cleared each tick instead of reallocated) ----
     private safeZoneCache: Map<string, boolean> = new Map();
@@ -883,7 +886,8 @@ export class Game {
         const ackedIds     = this.acknowledgedDestroyedIds.get(viewerId)!;
 
         // ---- Players delta ----
-        const deltaPlayers: DeltaPlayerState[] = [];
+        const deltaPlayers = this._deltaPlayers;
+        deltaPlayers.length = 0;
         for (const cur of currentPlayers) {
             const prev = prevStates.get(cur.id);
             if (!prev) {
@@ -937,7 +941,8 @@ export class Game {
         // ---- Destroyed IDs: only send IDs not yet acknowledged by this player ----
         // Use the per-tick newly-destroyed list (typically 0-5 items) instead of
         // iterating the full destroyedIds array (thousands of items).
-        const newDestroyedIds: number[] = [];
+        const newDestroyedIds = this._newDestroyedIds;
+        newDestroyedIds.length = 0;
         for (const id of this.world.newlyDestroyedThisTick) {
             if (!ackedIds.has(id)) {
                 newDestroyedIds.push(id);

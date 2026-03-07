@@ -131,6 +131,8 @@ export class TornadoMesh {
         height: number; // Y position (local)
     }>;
     private trailActiveCount: number = 0;
+    /** Previous frame's trail active count — used to detect transition to zero for one final GPU upload. */
+    private _prevTrailActive: number = 0;
 
     // Three.js objects for the trail
     private trailPoints: THREE.Points;
@@ -1230,9 +1232,15 @@ export class TornadoMesh {
             this.trailSizes[i] = 0;
         }
 
-        this.trailPoints.geometry.attributes.position.needsUpdate = true;
-        this.trailPoints.geometry.attributes.color.needsUpdate    = true;
-        this.trailPoints.geometry.attributes.size.needsUpdate     = true;
+        // Only upload trail buffers to the GPU when something changed:
+        // either particles are active, or we just transitioned to zero
+        // (need one final upload to park the last slots below ground).
+        if (this.trailActiveCount > 0 || this._prevTrailActive > 0) {
+            this.trailPoints.geometry.attributes.position.needsUpdate = true;
+            this.trailPoints.geometry.attributes.color.needsUpdate    = true;
+            this.trailPoints.geometry.attributes.size.needsUpdate     = true;
+        }
+        this._prevTrailActive = this.trailActiveCount;
     }
 
     private _updateVehicles(funnelHeight: number, groundWidth: number, cloudWidth: number): void {

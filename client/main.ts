@@ -15,7 +15,7 @@ import { InputHandler } from './input/InputHandler.js';
 import { HUD } from './ui/HUD.js';
 import { getGraphicsQuality, setGraphicsQuality } from './settings/GraphicsConfig.js';
 import { SKIN_LIST } from './scene/TornadoSkins.js';
-import type { GameState, WorldObject, WorldObjectType, TerrainZone, SafeZone, PowerUp } from '../shared/types.js';
+import type { GameState, WorldObject, WorldObjectType, TerrainZone, SafeZone, PowerUp, InputPayload } from '../shared/types.js';
 
 // ---- DOM Elements ----
 const canvas             = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -308,6 +308,10 @@ interface BufferedInput {
 /** Inputs sent but not yet acknowledged by the server (lastInputSeq from PlayerState). */
 const pendingInputs: BufferedInput[] = [];
 
+/** Pre-allocated input object reused for network sends to avoid per-tick allocation.
+ *  ONLY used for the sendInput() call — pendingInputs entries are separate objects. */
+const _stampedInput: InputPayload & { seq: number } = { angle: 0, active: false, boost: false, seq: 0 };
+
 /** The last input sent to the server — used in the render loop for extrapolation
  *  consistency so displayPos advances using the same input the server will process. */
 let lastSentInput: { angle: number; active: boolean; boost: boolean } = { angle: 0, active: false, boost: false };
@@ -566,8 +570,11 @@ function startGame(): void {
                 : input.getInput();
             // Stamp this input with the next monotonic sequence number
             inputSeq++;
-            const stamped = { ...raw, seq: inputSeq };
-            network.sendInput(stamped);
+            _stampedInput.angle  = raw.angle;
+            _stampedInput.active = raw.active;
+            _stampedInput.boost  = raw.boost;
+            _stampedInput.seq    = inputSeq;
+            network.sendInput(_stampedInput);
 
             // Cache the sent input so the render loop uses the same values
             lastSentInput.angle  = raw.angle;

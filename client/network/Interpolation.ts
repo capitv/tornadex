@@ -93,6 +93,9 @@ export class Interpolation {
     /** Persistent output map — entries are updated in-place each frame. */
     private outputMap: Map<string, PlayerState> = new Map();
 
+    /** Reusable Set for tracking current player IDs — avoids per-call allocation. */
+    private _currentIds: Set<string> = new Set();
+
     /**
      * Ingest a new server state snapshot.
      *
@@ -101,7 +104,8 @@ export class Interpolation {
      *                    (GameState.serverTime).
      */
     updateState(players: PlayerState[], serverTime: number): void {
-        const currentIds = new Set<string>();
+        const currentIds = this._currentIds;
+        currentIds.clear();
 
         for (const p of players) {
             currentIds.add(p.id);

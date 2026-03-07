@@ -564,6 +564,17 @@ export class WorldRenderer {
     // Half-size of the ceiling geometry in world units (set in createCloudCeiling).
     private _cloudHalfSize = 0;
 
+    // Pre-allocated typed arrays for cloud deformation (max 64 tornados).
+    private _cloudTLx = new Float32Array(64);
+    private _cloudTLy = new Float32Array(64);
+    private _cloudTDepth = new Float32Array(64);
+    private _cloudTInvInfl2 = new Float32Array(64);
+    private _cloudTCullR2 = new Float32Array(64);
+
+    // Pre-allocated tornado descriptor objects for cloud deformation (max 64).
+    private _cloudTornadoPool: { lx: number; ly: number; influence2: number; depth: number; cullRadius: number }[] =
+        Array.from({ length: 64 }, () => ({ lx: 0, ly: 0, influence2: 0, depth: 0, cullRadius: 0 }));
+
     createCloudCeiling(worldSize: number): void {
         // 80x80 segments give 6 561 vertices — enough resolution for smooth
         // gaussian depressions without being prohibitively expensive.
@@ -632,34 +643,28 @@ export class WorldRenderer {
 
         // Pre-convert tornado positions to plane-local coordinates and
         // pre-compute per-tornado constants so the inner vertex loop is lean.
-        const activeTornados: {
-            lx: number;   // local plane X
-            ly: number;   // local plane Y (= world Z)
-            influence2: number; // influence radius squared
-            depth: number;      // maximum depression depth (local Z units)
-            cullRadius: number; // skip vertex if farther than this
-        }[] = [];
-
-        for (const t of tornadoPositions) {
+        // Reuse pre-allocated pool objects to avoid per-frame allocations.
+        const tornLen = tornadoPositions.length;
+        for (let i = 0; i < tornLen; i++) {
+            const t = tornadoPositions[i];
             const influence = t.radius * 10;
-            activeTornados.push({
-                lx: t.x - meshWorldX,
-                ly: t.z - meshWorldZ,
-                influence2: influence * influence,
-                depth: t.radius * 3,
-                cullRadius: influence * 3, // beyond 3σ the pull is negligible
-            });
+            const obj = this._cloudTornadoPool[i];
+            obj.lx = t.x - meshWorldX;
+            obj.ly = t.z - meshWorldZ;
+            obj.influence2 = influence * influence;
+            obj.depth = t.radius * 3;
+            obj.cullRadius = influence * 3; // beyond 3σ the pull is negligible
         }
 
         // Pre-compute per-tornado derived constants outside the vertex loop.
-        const tornLen = activeTornados.length;
-        const tLx        = new Float32Array(tornLen);
-        const tLy        = new Float32Array(tornLen);
-        const tDepth     = new Float32Array(tornLen);
-        const tInvInfl2  = new Float32Array(tornLen); // 1 / influence²
-        const tCullR2    = new Float32Array(tornLen);  // cullRadius²
+        // Reuse pre-allocated Float32Arrays (sized to 64, always > tornLen).
+        const tLx        = this._cloudTLx;
+        const tLy        = this._cloudTLy;
+        const tDepth     = this._cloudTDepth;
+        const tInvInfl2  = this._cloudTInvInfl2;
+        const tCullR2    = this._cloudTCullR2;
         for (let t = 0; t < tornLen; t++) {
-            const at = activeTornados[t];
+            const at = this._cloudTornadoPool[t];
             tLx[t]       = at.lx;
             tLy[t]       = at.ly;
             tDepth[t]    = at.depth;

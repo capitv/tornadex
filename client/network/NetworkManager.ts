@@ -39,6 +39,11 @@ export class NetworkManager {
     // Pre-allocated reusable containers for applyDelta (avoid per-tick allocations)
     private _deltaMap: Map<string, DeltaPlayerState> = new Map();
     private _seenIds: Set<string> = new Set();
+    private _mergedPlayers: PlayerState[] = [];
+
+    // ---- PlayerState object pool (avoid per-tick allocations) ----
+    private _playerPool: PlayerState[] = [];
+    private _playerPoolIdx: number = 0;
 
     playerId: string = '';
     /** The last name passed to join(). Used to re-join automatically after reconnect. */
@@ -348,12 +353,30 @@ export class NetworkManager {
         this.cachedPlayerMap.clear();
     }
 
+    /** Get a reusable PlayerState object from the pool, or create one if needed. */
+    private _getPooledPlayer(): PlayerState {
+        if (this._playerPoolIdx < this._playerPool.length) {
+            return this._playerPool[this._playerPoolIdx++];
+        }
+        const p: PlayerState = {
+            id: '', name: '', x: 0, y: 0, radius: 0, rotation: 0,
+            score: 0, velocityX: 0, velocityY: 0, alive: true,
+            stamina: 100, activeEffects: [], protected: false, afk: false, lastInputSeq: 0,
+        };
+        this._playerPool.push(p);
+        this._playerPoolIdx++;
+        return p;
+    }
+
     /**
      * Merge a DeltaGameState onto the previous full GameState and return a
      * new complete GameState. The previous state is not mutated.
      */
     private applyDelta(prev: GameState, delta: DeltaGameState): GameState {
         // ---- Players ----
+        // Reset pool index so we reuse existing PlayerState objects
+        this._playerPoolIdx = 0;
+
         // Reuse pre-allocated containers (cleared, not re-allocated)
         const deltaMap = this._deltaMap;
         deltaMap.clear();
@@ -361,7 +384,8 @@ export class NetworkManager {
             deltaMap.set(dp.id, dp);
         }
 
-        const mergedPlayers: PlayerState[] = [];
+        const mergedPlayers = this._mergedPlayers;
+        mergedPlayers.length = 0;
         const seenIds = this._seenIds;
         seenIds.clear();
 
@@ -417,23 +441,23 @@ export class NetworkManager {
      * Only fields present in the delta overwrite the previous values.
      */
     private mergePlayer(prev: PlayerState, dp: DeltaPlayerState): PlayerState {
-        return {
-            id:            dp.id,
-            x:             dp.x,
-            y:             dp.y,
-            rotation:      dp.rotation,
-            name:          dp.name          !== undefined ? dp.name          : prev.name,
-            radius:        dp.radius        !== undefined ? dp.radius        : prev.radius,
-            score:         dp.score         !== undefined ? dp.score         : prev.score,
-            velocityX:     dp.velocityX     !== undefined ? dp.velocityX     : prev.velocityX,
-            velocityY:     dp.velocityY     !== undefined ? dp.velocityY     : prev.velocityY,
-            alive:         dp.alive         !== undefined ? dp.alive         : prev.alive,
-            stamina:       dp.stamina       !== undefined ? dp.stamina       : prev.stamina,
-            activeEffects: dp.activeEffects !== undefined ? dp.activeEffects : prev.activeEffects,
-            protected:     dp.protected     !== undefined ? dp.protected     : prev.protected,
-            afk:           dp.afk           !== undefined ? dp.afk           : prev.afk,
-            lastInputSeq:  dp.lastInputSeq  !== undefined ? dp.lastInputSeq  : prev.lastInputSeq,
-        };
+        const p = this._getPooledPlayer();
+        p.id            = dp.id;
+        p.x             = dp.x;
+        p.y             = dp.y;
+        p.rotation      = dp.rotation;
+        p.name          = dp.name          !== undefined ? dp.name          : prev.name;
+        p.radius        = dp.radius        !== undefined ? dp.radius        : prev.radius;
+        p.score         = dp.score         !== undefined ? dp.score         : prev.score;
+        p.velocityX     = dp.velocityX     !== undefined ? dp.velocityX     : prev.velocityX;
+        p.velocityY     = dp.velocityY     !== undefined ? dp.velocityY     : prev.velocityY;
+        p.alive         = dp.alive         !== undefined ? dp.alive         : prev.alive;
+        p.stamina       = dp.stamina       !== undefined ? dp.stamina       : prev.stamina;
+        p.activeEffects = dp.activeEffects !== undefined ? dp.activeEffects : prev.activeEffects;
+        p.protected     = dp.protected     !== undefined ? dp.protected     : prev.protected;
+        p.afk           = dp.afk           !== undefined ? dp.afk           : prev.afk;
+        p.lastInputSeq  = dp.lastInputSeq  !== undefined ? dp.lastInputSeq  : prev.lastInputSeq;
+        return p;
     }
 
     /**
@@ -441,22 +465,22 @@ export class NetworkManager {
      * complete PlayerState, using safe defaults for any missing optional fields.
      */
     private deltaToFullPlayer(dp: DeltaPlayerState): PlayerState {
-        return {
-            id:            dp.id,
-            x:             dp.x,
-            y:             dp.y,
-            rotation:      dp.rotation,
-            name:          dp.name          ?? '',
-            radius:        dp.radius        ?? 1,
-            score:         dp.score         ?? 0,
-            velocityX:     dp.velocityX     ?? 0,
-            velocityY:     dp.velocityY     ?? 0,
-            alive:         dp.alive         ?? true,
-            stamina:       dp.stamina       ?? 100,
-            activeEffects: dp.activeEffects ?? [],
-            protected:     dp.protected     ?? false,
-            afk:           dp.afk           ?? false,
-            lastInputSeq:  dp.lastInputSeq  ?? 0,
-        };
+        const p = this._getPooledPlayer();
+        p.id            = dp.id;
+        p.x             = dp.x;
+        p.y             = dp.y;
+        p.rotation      = dp.rotation;
+        p.name          = dp.name          ?? '';
+        p.radius        = dp.radius        ?? 1;
+        p.score         = dp.score         ?? 0;
+        p.velocityX     = dp.velocityX     ?? 0;
+        p.velocityY     = dp.velocityY     ?? 0;
+        p.alive         = dp.alive         ?? true;
+        p.stamina       = dp.stamina       ?? 100;
+        p.activeEffects = dp.activeEffects ?? [];
+        p.protected     = dp.protected     ?? false;
+        p.afk           = dp.afk           ?? false;
+        p.lastInputSeq  = dp.lastInputSeq  ?? 0;
+        return p;
     }
 }
