@@ -15,15 +15,14 @@ export const PLAYER_MIN_RADIUS = 0.8;           // Starting tornado radius
 export const PLAYER_MAX_RADIUS = 25;            // Maximum tornado radius
 export const PLAYER_SPAWN_RADIUS = 0.8;
 
-// Growth amounts per absorbed object — tuned so early levels feel rewarding
-// while late-game (F4/F5) requires real effort to grow further.
+// Growth amounts per absorbed object — halved to slow F0→F5 progression.
 export const OBJECT_GROWTH: Record<WorldObjectType, number> = {
-    'animal':       0.0024,
-    'tree':         0.0056,
-    'car':          0.012,
-    'barn':         0.032,
-    'trailer_park': 0.04,
-    'stadium':      0.08,
+    'animal':       0.0012,
+    'tree':         0.0028,
+    'car':          0.006,
+    'barn':         0.016,
+    'trailer_park': 0.02,
+    'stadium':      0.04,
 };
 
 // Tornado absorption: attacker must be X times bigger
@@ -95,8 +94,8 @@ export const VEHICLE_SPEED_MAX = 0.40;
 export const VEHICLE_RESPAWN_TICKS = TICK_RATE * 10;
 /** Points awarded for destroying an NPC vehicle. */
 export const VEHICLE_POINTS = 150;
-/** Radius growth awarded for destroying an NPC vehicle. */
-export const VEHICLE_GROWTH = 0.048;
+/** Radius growth awarded for destroying an NPC vehicle (halved). */
+export const VEHICLE_GROWTH = 0.024;
 /** Minimum tornado radius required to destroy a vehicle (same as a car). */
 export const VEHICLE_SIZE = 0.8;
 /** Collision radius of a vehicle for tornado interaction. */

@@ -13,9 +13,8 @@ import { Logger } from './Logger.js';
 const botLogger = new Logger('BotManager');
 
 // ---- Tuning constants ----
-const MIN_BOTS_WITH_ONE_REAL_PLAYER = 2;
-const TARGET_TOTAL_WITH_NO_REAL_PLAYERS = 5;  // 0 real → fill to 5 bots
-const TARGET_TOTAL_WITH_ONE_REAL_PLAYER  = 4;  // 1 real → fill to 4 total (3 bots + 1 real, but we cap at 3 bots)
+/** Always fill the room to this many total players (humans + bots). */
+const TARGET_TOTAL_PLAYERS = 8;
 
 const BOT_RESPAWN_DELAY_TICKS_MIN = TICK_RATE * 3; // 3 seconds
 const BOT_RESPAWN_DELAY_TICKS_MAX = TICK_RATE * 5; // 5 seconds
@@ -228,34 +227,30 @@ export class BotManager {
      * Adjusts the number of active bots accordingly.
      */
     onRealPlayerChange(realPlayerCount: number): void {
-        const currentBotCount = this.bots.size;
-
-        let targetBots: number;
         if (realPlayerCount === 0) {
             // No real players — remove all bots to save resources
-            targetBots = 0;
-        } else if (realPlayerCount === 1) {
-            // Keep at least MIN_BOTS_WITH_ONE_REAL_PLAYER bots alongside the lone real player
-            targetBots = Math.max(MIN_BOTS_WITH_ONE_REAL_PLAYER, TARGET_TOTAL_WITH_ONE_REAL_PLAYER - realPlayerCount);
-        } else {
-            // 2+ real players — no bots needed; remove gradually
-            targetBots = 0;
+            for (const botId of [...this.bots.keys()]) {
+                this.removeBot(botId);
+            }
+            return;
         }
 
+        const currentBotCount = this.bots.size;
+        const targetBots = Math.max(0, TARGET_TOTAL_PLAYERS - realPlayerCount);
+
         if (currentBotCount < targetBots) {
-            // Spawn bots up to the target
+            // Spawn bots to fill up to TARGET_TOTAL_PLAYERS
             const toSpawn = targetBots - currentBotCount;
             for (let i = 0; i < toSpawn; i++) {
                 this.spawnBot();
             }
         } else if (currentBotCount > targetBots) {
-            // Remove excess bots gradually (one at a time per call)
+            // Remove excess bots — pick the weakest (smallest radius) first
             const toRemove = currentBotCount - targetBots;
-            let removed = 0;
-            for (const [botId] of this.bots) {
-                if (removed >= toRemove) break;
-                this.removeBot(botId);
-                removed++;
+            const sortedBots = [...this.bots.entries()]
+                .sort((a, b) => a[1].player.radius - b[1].player.radius);
+            for (let i = 0; i < toRemove && i < sortedBots.length; i++) {
+                this.removeBot(sortedBots[i][0]);
             }
         }
     }
