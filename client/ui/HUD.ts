@@ -275,24 +275,20 @@ export class HUD {
 
     // ---- Leaderboard ----
     updateLeaderboard(entries: LeaderboardEntry[], localName: string): void {
-        this.leaderboardList.innerHTML = '';
-
+        let html = '';
         for (let i = 0; i < entries.length; i++) {
             const entry = entries[i];
-            const li = document.createElement('li');
-            if (entry.name === localName) li.className = 'is-me';
-
             const cat = this.getCategoryForRadius(entry.radius);
             const catColor = this.getCategoryColor(cat);
-
-            li.innerHTML = `
+            const meClass = entry.name === localName ? ' is-me' : '';
+            html += `<li class="${meClass}">
                 <span class="lb-rank">${i + 1}</span>
                 <span class="lb-name">${this.escapeHtml(entry.name)}</span>
                 <span class="lb-cat" style="background:${catColor}22;color:${catColor}">${cat}</span>
                 <span class="lb-score">${Math.floor(entry.score)}</span>
-            `;
-            this.leaderboardList.appendChild(li);
+            </li>`;
         }
+        this.leaderboardList.innerHTML = html;
     }
 
     // ---- Minimap ----
@@ -388,11 +384,13 @@ export class HUD {
      *                 expiresAt is repurposed here to carry ticks-remaining (server converts).
      */
     updatePowerUps(effects: ActiveEffect[]): void {
-        const activeTypes = new Set<PowerUpType>(effects.map(e => e.type));
-
         // Remove effect UI elements that are no longer active
         for (const [type, el] of this.powerupEls) {
-            if (!activeTypes.has(type)) {
+            let stillActive = false;
+            for (const e of effects) {
+                if (e.type === type) { stillActive = true; break; }
+            }
+            if (!stillActive) {
                 el.remove();
                 this.powerupEls.delete(type);
             }

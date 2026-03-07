@@ -83,6 +83,8 @@ export class Game {
     private acknowledgedDestroyedIds: Map<string, Set<number>> = new Map();
     /** How many ticks each player has received (for keyframe scheduling). */
     private playerSentTicks: Map<string, number> = new Map();
+    /** Reusable Set for updateDeltaBaseline to avoid allocating a new array each tick. */
+    private _baselineIdSet: Set<string> = new Set();
     /** Send a full keyframe every N ticks to prevent drift. */
     private static readonly KEYFRAME_INTERVAL = 100;
 
@@ -107,6 +109,12 @@ export class Game {
     private _leaderboardSortBuf: Player[] = [];
     // ---- Pre-allocated empty activeEffects array (shared, never mutated) ----
     private static readonly _emptyEffects: ActiveEffect[] = [];
+    // ---- Pre-allocated position-only state (reused by toPositionOnlyState) ----
+    private _posOnlyState: PlayerState = {
+        id: '', name: '', x: 0, y: 0, radius: 0, rotation: 0,
+        score: 0, velocityX: 0, velocityY: 0, alive: true,
+        stamina: 0, activeEffects: Game._emptyEffects, protected: false, afk: false, lastInputSeq: 0,
+    };
 
     constructor(seed: number) {
         this.world = new World(seed);
@@ -841,25 +849,17 @@ export class Game {
      * position, radius, alive flag, and identity. Everything else is zeroed/defaulted.
      */
     private toPositionOnlyState(state: PlayerState): PlayerState {
-        return {
-            id: state.id,
-            name: state.name,
-            x: state.x,
-            y: state.y,
-            radius: state.radius,
-            alive: state.alive,
-            // Preserve protection flag so distant players still render the shield glow
-            protected: state.protected,
-            // Omitted detail fields – set to neutral defaults
-            rotation: 0,
-            score: 0,
-            velocityX: 0,
-            velocityY: 0,
-            stamina: 0,
-            activeEffects: Game._emptyEffects,
-            afk: state.afk,
-            lastInputSeq: state.lastInputSeq,
-        };
+        const s = this._posOnlyState;
+        s.id = state.id;
+        s.name = state.name;
+        s.x = state.x;
+        s.y = state.y;
+        s.radius = state.radius;
+        s.alive = state.alive;
+        s.protected = state.protected;
+        s.afk = state.afk;
+        s.lastInputSeq = state.lastInputSeq;
+        return s;
     }
 
     /**
@@ -984,9 +984,9 @@ export class Game {
         // Update per-player state map — store only delta-relevant fields
         // instead of cloning the entire PlayerState with { ...p }.
         const prevStates = this.previousPlayerStates.get(viewerId)!;
-        const currentIds: string[] = [];
+        const currentIds = this._baselineIdSet;
+        currentIds.clear();
         for (const p of currentPlayers) {
-            const activeEffectsJson = JSON.stringify(p.activeEffects);
             // Store a lightweight snapshot with only the fields compared in buildDelta()
             prevStates.set(p.id, {
                 id: p.id,
@@ -1005,12 +1005,12 @@ export class Game {
                 activeEffects: p.activeEffects,
                 lastInputSeq: p.lastInputSeq,
             });
-            currentIds.push(p.id);
+            currentIds.add(p.id);
         }
         // Remove players no longer in the filtered list (only if the map grew)
-        if (prevStates.size > currentIds.length) {
+        if (prevStates.size > currentIds.size) {
             for (const id of prevStates.keys()) {
-                if (!currentIds.includes(id)) prevStates.delete(id);
+                if (!currentIds.has(id)) prevStates.delete(id);
             }
         }
 

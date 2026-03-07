@@ -28,6 +28,7 @@ interface ViolationEntry {
  * accounting for the worst-case speed boost + a 1.5x network-tolerance margin.
  */
 const MAX_SPEED_TOLERANCE = PLAYER_SPEED * SPEED_BOOST_MULTIPLIER * 1.8 * 1.5;
+const MAX_SPEED_TOLERANCE_SQ = MAX_SPEED_TOLERANCE * MAX_SPEED_TOLERANCE;
 
 /**
  * Minimum radius growth per tick to even consider suspicious.
@@ -86,12 +87,12 @@ export class AntiCheat {
                 // --- Position check ---
                 const dx = player.x - prev.x;
                 const dy = player.y - prev.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
+                const distSq = dx * dx + dy * dy;
 
-                if (dist > MAX_SPEED_TOLERANCE) {
+                if (distSq > MAX_SPEED_TOLERANCE_SQ) {
                     this._warnThrottled(
                         player.id,
-                        `Player ${player.id} moved ${dist.toFixed(2)} units in one tick ` +
+                        `Player ${player.id} moved ${Math.sqrt(distSq).toFixed(2)} units in one tick ` +
                         `(max allowed: ${MAX_SPEED_TOLERANCE.toFixed(2)}) — possible teleport/speed hack`,
                     );
                     violated = true;

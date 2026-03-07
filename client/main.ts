@@ -263,7 +263,8 @@ const tornadoOverWater: Set<string> = new Set();
 
 // ---- Reusable per-frame sets/arrays (avoid allocations in the render loop) ----
 const _activeMeshIds = new Set<string>();
-const _tornadoDeformPositions: { x: number; z: number; radius: number }[] = [];
+const _tornadoDeformPositions: { x: number; z: number; radius: number }[] = new Array(64);
+for (let i = 0; i < 64; i++) _tornadoDeformPositions[i] = { x: 0, z: 0, radius: 0 };
 const _minimapPlayers: import('../shared/types.js').PlayerState[] = [];
 const _newlyDestroyed: number[] = [];
 
@@ -1091,9 +1092,11 @@ function animate(time: number): void {
             const camY = (displayPos ? displayPos.y : state.y);
             sceneManager.setCameraOffset(camX, camY, state.radius);
             hudManager.updateScore(state.score);
-            hudManager.updateSize(state.radius, 7);
-            hudManager.updateStamina(state.stamina, currentInput.boost);
-            hudManager.updatePowerUps(state.activeEffects ?? []);
+            if (frameCount % 3 === 0) {
+                hudManager.updateSize(state.radius, 7);
+                hudManager.updateStamina(state.stamina, currentInput.boost);
+                hudManager.updatePowerUps(state.activeEffects ?? []);
+            }
             lastScore = state.score;
 
             // Track max category reached this run for death screen stats
@@ -1412,34 +1415,29 @@ function formatRelativeDate(isoDate: string): string {
 }
 
 function renderLbRows(entries: LeaderboardRecord[]): void {
-    lbTbody.innerHTML = '';
-
     if (entries.length === 0) {
-        const empty = document.createElement('tr');
-        empty.innerHTML = `<td colspan="5" class="lb-empty">No entries yet — be the first!</td>`;
-        lbTbody.appendChild(empty);
+        lbTbody.innerHTML = `<tr><td colspan="5" class="lb-empty">No entries yet — be the first!</td></tr>`;
         return;
     }
 
+    let html = '';
     entries.forEach((e, i) => {
         const rank   = i + 1;
-        const tr     = document.createElement('tr');
-        if (rank <= 3) tr.classList.add('lb-row-top3');
-
+        const topClass = rank <= 3 ? ' lb-row-top3' : '';
         const rc     = rank === 1 ? 'lb-rank-gold' : rank === 2 ? 'lb-rank-silver' : rank === 3 ? 'lb-rank-bronze' : '';
         const cc     = `lb-cat-${e.maxCategory.toLowerCase()}`;
         const medals = ['🥇', '🥈', '🥉'];
         const medal  = rank <= 3 ? medals[rank - 1] : String(rank);
 
-        tr.innerHTML = `
+        html += `<tr class="${topClass}">
             <td class="${rc}">${medal}</td>
             <td>${escapeHtml(e.name)}</td>
             <td>${e.score.toLocaleString()}</td>
             <td class="${cc}">${escapeHtml(e.maxCategory)}</td>
             <td>${escapeHtml(formatRelativeDate(e.date))}</td>
-        `;
-        lbTbody.appendChild(tr);
+        </tr>`;
     });
+    lbTbody.innerHTML = html;
 }
 
 async function fetchAndShowLeaderboard(tab: 'alltime' | 'daily'): Promise<void> {

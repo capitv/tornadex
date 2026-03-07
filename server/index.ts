@@ -95,8 +95,14 @@ function checkChatRate(socketId: string): boolean {
         chatRateMap.set(socketId, entry);
     }
 
-    // Remove timestamps older than 5 seconds
-    entry.timestamps = entry.timestamps.filter(t => now - t < 5000);
+    // Remove timestamps older than 5 seconds (in-place to avoid allocation)
+    let writeIdx = 0;
+    for (let i = 0; i < entry.timestamps.length; i++) {
+        if (now - entry.timestamps[i] < 5000) {
+            entry.timestamps[writeIdx++] = entry.timestamps[i];
+        }
+    }
+    entry.timestamps.length = writeIdx;
 
     if (entry.timestamps.length >= 3) {
         return false;
