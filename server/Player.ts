@@ -139,7 +139,9 @@ export class Player {
             const boostMultiplier = canBoost ? 1.8 : 1.0;
             const powerUpSpeedMult = this.hasEffect('speed') ? SPEED_BOOST_MULTIPLIER : 1.0;
             const speed = PLAYER_SPEED * (1 - this.radius * SPEED_SIZE_FACTOR) * speedMultiplier * boostMultiplier * powerUpSpeedMult;
-            const clampedSpeed = Math.max(speed, PLAYER_SPEED * 0.3 * boostMultiplier); // Never slower than 30% base speed
+            // Minimum speed floor: 30% for small tornados, drops to 15% for F4+ (radius > 5)
+            const minSpeedPct = this.radius > 5 ? 0.15 : 0.3;
+            const clampedSpeed = Math.max(speed, PLAYER_SPEED * minSpeedPct * boostMultiplier);
 
             this.velocityX = Math.cos(this.input.angle) * clampedSpeed;
             this.velocityY = Math.sin(this.input.angle) * clampedSpeed;
@@ -183,9 +185,16 @@ export class Player {
 
         // Active size decay — larger tornados naturally lose radius over time even while moving.
         // This prevents F4/F5 tornados from staying giant forever.
-        // Decay starts above radius 2.0 (F1+) and scales with size.
+        // Tiered decay: gentle below r=4 (F2), aggressive above r=6 (F3+).
         if (this.radius > 2.0) {
-            const decayRate = (this.radius - 2.0) * 0.0008; // bigger = faster decay
+            let decayRate: number;
+            if (this.radius > 6.0) {
+                // F3+ severe decay — quadratic scaling punishes giant tornados hard
+                decayRate = (this.radius - 2.0) * 0.003 + (this.radius - 6.0) * (this.radius - 6.0) * 0.0005;
+            } else {
+                // F1-F2 gentle decay
+                decayRate = (this.radius - 2.0) * 0.0012;
+            }
             this.radius = Math.max(PLAYER_MIN_RADIUS, this.radius - decayRate);
         }
 

@@ -44,14 +44,14 @@ export const WATER_DECAY_RATE = 0.003;
 // Object respawn time (ticks)
 export const OBJECT_RESPAWN_TICKS = TICK_RATE * 30; // 30 seconds
 
-// World object counts
+// World object counts (only trees — other types removed)
 export const OBJECT_COUNTS = {
     tree:         8000,  // Dense forests
-    barn:         200,
-    car:           400,
-    animal:        600,
-    trailer_park:  40,
-    stadium:       10,
+    barn:         0,
+    car:           0,
+    animal:        0,
+    trailer_park:  0,
+    stadium:       0,
 };
 
 // Spatial grid cell size
@@ -63,8 +63,8 @@ export const SERVER_PORT = 3001;
 // Attraction radius multiplier (how far tornado sucks objects visually)
 export const ATTRACTION_RADIUS_MULT = 2.5;
 
-// Speed scales with size (bigger = slightly slower)
-export const SPEED_SIZE_FACTOR = 0.015;
+// Speed scales with size (bigger = slower — large tornados are powerful but sluggish)
+export const SPEED_SIZE_FACTOR = 0.025;
 
 // ---- Power-ups ----
 export const POWERUP_COUNT_MIN = 10;
