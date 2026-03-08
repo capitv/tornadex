@@ -3,11 +3,13 @@
 // ============================================
 
 import { WorldObjectType } from '../shared/types.js';
+import { WORLD_SIZE, OBJECT_COUNTS, SAFE_ZONE_RADIUS } from '../shared/worldConfig.js';
+
+export { WORLD_SIZE, OBJECT_COUNTS, SAFE_ZONE_RADIUS };
 
 export const TICK_RATE = 20;                    // Ticks per second
 export const TICK_INTERVAL = 1000 / TICK_RATE;  // ms per tick (50ms)
 
-export const WORLD_SIZE = 1000;                 // Small dense world
 export const MAX_PLAYERS = 50;
 
 export const PLAYER_SPEED = 1.0;                // Base movement speed (units/tick)
@@ -44,15 +46,6 @@ export const WATER_DECAY_RATE = 0.003;
 export const OBJECT_RESPAWN_TICKS = TICK_RATE * 30; // 30 seconds
 
 // World object counts (only trees — other types removed)
-export const OBJECT_COUNTS = {
-    tree:         8000,  // Dense forests
-    barn:         0,
-    car:           0,
-    animal:        0,
-    trailer_park:  0,
-    stadium:       0,
-};
-
 // Spatial grid cell size
 export const GRID_CELL_SIZE = 50;
 
@@ -108,5 +101,3 @@ export const SPAWN_PROTECTION_MS = 1500;
 // ---- Safe Haven Zones ----
 /** Tornadoes with radius strictly below this value are protected inside safe zones (F0/F1 only). */
 export const SAFE_ZONE_MAX_RADIUS = 1.5;
-/** Visual/collision radius of each safe zone circle (world units). */
-export const SAFE_ZONE_RADIUS = 60;

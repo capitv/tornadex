@@ -11,6 +11,7 @@ import {
 } from './constants.js';
 import { OBJECT_SIZES } from '../shared/types.js';
 import { mulberry32 } from './prng.js';
+import { generateStaticWorldLayout } from '../shared/worldgen.js';
 
 export class World {
     objects: WorldObject[] = [];
@@ -37,9 +38,14 @@ export class World {
     constructor(seed: number) {
         this.seed = seed;
         this.rng = mulberry32(seed);
-        this.generateZones();
-        this.generateSafeZones();
-        this.generateObjects();
+        const layout = generateStaticWorldLayout(seed);
+        this.zones = layout.zones;
+        this.safeZones = layout.safeZones;
+        this.objects = layout.objects;
+        for (const obj of this.objects) {
+            this.objectsById.set(obj.id, obj);
+        }
+        this.nextId = this.objects.length;
         this.generatePowerUps();
         this.generateVehicles();
     }

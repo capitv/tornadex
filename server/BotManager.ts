@@ -206,8 +206,8 @@ export class BotManager {
                     const oldest = state.positionHistory[0];
                     const dx = player.x - oldest.x;
                     const dy = player.y - oldest.y;
-                    const netDisplacement = Math.sqrt(dx * dx + dy * dy);
-                    if (netDisplacement < STUCK_DISTANCE_THRESHOLD) {
+                    const netDisplacementSq = dx * dx + dy * dy;
+                    if (netDisplacementSq < STUCK_DISTANCE_THRESHOLD * STUCK_DISTANCE_THRESHOLD) {
                         // Bot is stuck — trigger an escape manoeuvre
                         state.escapeTicksLeft = STUCK_ESCAPE_TICKS;
                         state.escapeAngle = Math.random() * Math.PI * 2;
@@ -444,16 +444,18 @@ export class BotManager {
         range: number,
     ): { x: number; y: number } | null {
         let closest: { x: number; y: number } | null = null;
-        let closestDist = range;
+        let closestDistSq = range * range;
 
         for (const other of this.game.players.values()) {
             if (other.id === self.id || !other.alive) continue;
             // Only flee if the other can absorb us
             if (!other.canAbsorb(self)) continue;
 
-            const dist = self.distanceTo(other);
-            if (dist < closestDist) {
-                closestDist = dist;
+            const dx = other.x - self.x;
+            const dy = other.y - self.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < closestDistSq) {
+                closestDistSq = distSq;
                 closest = { x: other.x, y: other.y };
             }
         }
@@ -470,16 +472,18 @@ export class BotManager {
         ratioThreshold: number,
     ): { x: number; y: number } | null {
         let closest: { x: number; y: number } | null = null;
-        let closestDist = range;
+        let closestDistSq = range * range;
 
         for (const other of this.game.players.values()) {
             if (other.id === self.id || !other.alive) continue;
             // Must be significantly smaller (not just canAbsorb threshold)
             if (self.radius < other.radius * ratioThreshold) continue;
 
-            const dist = self.distanceTo(other);
-            if (dist < closestDist) {
-                closestDist = dist;
+            const dx = other.x - self.x;
+            const dy = other.y - self.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < closestDistSq) {
+                closestDistSq = distSq;
                 closest = { x: other.x, y: other.y };
             }
         }
@@ -496,15 +500,15 @@ export class BotManager {
         range: number,
     ): { x: number; y: number } | null {
         let closest: { x: number; y: number } | null = null;
-        let closestDist = range;
+        let closestDistSq = range * range;
 
         for (const pu of this.world.powerUps) {
             if (!pu.active) continue;
             const dx = pu.x - x;
             const dy = pu.y - y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < closestDist) {
-                closestDist = dist;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < closestDistSq) {
+                closestDistSq = distSq;
                 closest = { x: pu.x, y: pu.y };
             }
         }
@@ -570,12 +574,12 @@ export class BotManager {
         const { player } = state;
         const dx = state.wanderTarget.x - player.x;
         const dy = state.wanderTarget.y - player.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
+        const distSq = dx * dx + dy * dy;
 
         state.wanderTicksLeft--;
 
         // Refresh target when close or timer elapsed
-        if (dist < 20 || state.wanderTicksLeft <= 0) {
+        if (distSq < 400 || state.wanderTicksLeft <= 0) {
             state.wanderTarget = this.randomWorldPoint();
             state.wanderTicksLeft = this.randomWanderTicks();
         }

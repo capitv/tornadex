@@ -8,7 +8,7 @@ import { Server } from 'socket.io';
 import { RoomManager } from './RoomManager.js';
 import { Metrics } from './Metrics.js';
 import { Logger } from './Logger.js';
-import { SERVER_PORT, TICK_RATE } from './constants.js';
+import { SERVER_PORT, TICK_RATE, WORLD_SIZE } from './constants.js';
 import { leaderboard as persistentLeaderboard } from './Leaderboard.js';
 import type {
     ClientToServerEvents,
@@ -279,11 +279,8 @@ io.on('connection', (socket) => {
         // Send join confirmation with this room's world state
         socket.emit('game:joined', {
             id: socket.id,
-            worldSize: 2000,
+            worldSize: WORLD_SIZE,
             seed: entry.seed,
-            zones: entry.game.world.zones,
-            safeZones: entry.game.world.safeZones,
-            objects: entry.game.world.objects,
         });
     });
 

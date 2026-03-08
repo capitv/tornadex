@@ -3,6 +3,7 @@
 // ============================================
 
 import type { LeaderboardEntry, PlayerState, ActiveEffect, PowerUpType } from '../../shared/types.js';
+import { WORLD_SIZE } from '../../shared/worldConfig.js';
 
 
 // Fujita category thresholds (radius values)
@@ -39,7 +40,7 @@ export class HUD {
     private minimapCtx: CanvasRenderingContext2D;
     private staminaFill: HTMLElement;
     private boostKey: HTMLElement;
-    private worldSize: number = 2000;
+    private worldSize: number = WORLD_SIZE;
 
     private killFeedEl: HTMLElement;
     private killEntries: HTMLElement[] = [];

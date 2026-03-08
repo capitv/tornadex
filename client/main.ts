@@ -15,6 +15,8 @@ import { InputHandler } from './input/InputHandler.js';
 import { HUD } from './ui/HUD.js';
 import { getGraphicsQuality, setGraphicsQuality } from './settings/GraphicsConfig.js';
 import { SKIN_LIST } from './scene/TornadoSkins.js';
+import { WORLD_SIZE } from '../shared/worldConfig.js';
+import { generateStaticWorldLayout } from '../shared/worldgen.js';
 import type { GameState, WorldObject, WorldObjectType, TerrainZone, SafeZone, PowerUp, InputPayload } from '../shared/types.js';
 
 // ---- DOM Elements ----
@@ -187,7 +189,7 @@ const prevStamina: Map<string, number> = new Map();
 // ---- State ----
 let playerName = '';
 let lastScore = 0;
-let worldSize = 2000;
+let worldSize = WORLD_SIZE;
 let previousObjectIds: Set<number> = new Set();
 let isPlaying = false;
 
@@ -634,21 +636,40 @@ function respawnGame(): void {
 
 // ---- Network Callbacks ----
 network.onJoined((data) => {
+    interpolation.clear();
+    previousObjectIds.clear();
+    waterZones = [];
+    _safeZones = [];
+
+    for (const [id, mesh] of tornadoMeshes) {
+        sceneManager.scene.remove(mesh.group);
+        mesh.dispose();
+        if (tornadoOverWater.has(id)) {
+            particleSystem.removeSplashRing(id);
+        }
+    }
+    tornadoMeshes.clear();
+    tornadoOverWater.clear();
+    prevStamina.clear();
+    powerUpRenderer.dispose();
+    worldRenderer.resetWorld();
+
+    const worldLayout = generateStaticWorldLayout(data.seed);
     worldSize = data.worldSize;
     hudManager.setWorldSize(worldSize);
     worldRenderer.createGround(worldSize);
-    worldRenderer.createZones(data.zones);
+    worldRenderer.createZones(worldLayout.zones);
     // Cloud ceiling removed — sky gradient handles the atmosphere
-    worldRenderer.createInitialObjects(data.objects);
+    worldRenderer.createInitialObjects(worldLayout.objects);
 
     // Render safe haven zone circles on the ground
-    if (data.safeZones && data.safeZones.length > 0) {
-        _safeZones = data.safeZones;
-        worldRenderer.createSafeZones(data.safeZones);
+    if (worldLayout.safeZones.length > 0) {
+        _safeZones = worldLayout.safeZones;
+        worldRenderer.createSafeZones(worldLayout.safeZones);
     }
 
     // Cache water zones for per-frame waterspout checks
-    waterZones = (data.zones ?? []).filter(z => z.type === 'water');
+    waterZones = worldLayout.zones.filter(z => z.type === 'water');
 
     // Tell the skybox where the world is so lightning bolts land inside the map
     sceneManager.skybox.setWorldBounds(worldSize / 2, worldSize / 2, worldSize / 2);
@@ -658,7 +679,7 @@ network.onJoined((data) => {
         applySeed(data.seed);
     }
 
-    if (import.meta.env.DEV) console.log(`[Game] Joined! World size: ${worldSize}, Seed: ${data.seed}, Objects: ${data.objects.length}, Water zones: ${waterZones.length}`);
+    if (import.meta.env.DEV) console.log(`[Game] Joined! World size: ${worldSize}, Seed: ${data.seed}, Objects: ${worldLayout.objects.length}, Water zones: ${waterZones.length}`);
 });
 
 network.onState((state: GameState) => {

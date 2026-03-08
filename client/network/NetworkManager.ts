@@ -11,16 +11,14 @@ import type {
     DeltaPlayerState,
     PlayerState,
     InputPayload,
-    TerrainZone,
-    SafeZone,
-    WorldObject,
+    JoinedPayload,
 } from '../../shared/types.js';
 
 export class NetworkManager {
     private socket: Socket<ServerToClientEvents, ClientToServerEvents>;
     private onStateCallback: ((state: GameState) => void) | null = null;
     private onDeathCallback: ((killerName: string) => void) | null = null;
-    private onJoinedCallback: ((data: { id: string; worldSize: number; seed: number; zones: TerrainZone[]; safeZones: SafeZone[]; objects: WorldObject[] }) => void) | null = null;
+    private onJoinedCallback: ((data: JoinedPayload) => void) | null = null;
     private onDisconnectCallback: (() => void) | null = null;
     private onReconnectCallback: (() => void) | null = null;
     private onChatMessageCallback: ((data: { name: string; msg: string; timestamp: number }) => void) | null = null;
@@ -239,7 +237,7 @@ export class NetworkManager {
         this.onDeathCallback = cb;
     }
 
-    onJoined(cb: (data: { id: string; worldSize: number; seed: number; zones: TerrainZone[]; safeZones: SafeZone[]; objects: WorldObject[] }) => void): void {
+    onJoined(cb: (data: JoinedPayload) => void): void {
         this.onJoinedCallback = cb;
     }
 

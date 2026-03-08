@@ -150,6 +150,50 @@ export class WorldRenderer {
         });
     }
 
+    private disposeMaterial(material: THREE.Material | THREE.Material[] | undefined): void {
+        if (!material) return;
+        if (Array.isArray(material)) {
+            for (const mat of material) mat.dispose();
+            return;
+        }
+        material.dispose();
+    }
+
+    /**
+     * Remove and dispose the current world so a reconnect or room change
+     * can rebuild it without duplicating meshes, materials, and buffers.
+     */
+    resetWorld(): void {
+        for (const child of [...this.group.children]) {
+            this.group.remove(child);
+            child.traverse((obj) => {
+                const mesh = obj as THREE.Mesh;
+                if (mesh.geometry) {
+                    mesh.geometry.dispose();
+                }
+                this.disposeMaterial((mesh as { material?: THREE.Material | THREE.Material[] }).material);
+            });
+        }
+
+        this.zoneMeshes = [];
+        this.safeZoneMeshes = [];
+        this.instancedMeshes = {};
+        this.objectInstances.clear();
+        this.currentlyHidden.clear();
+        this.objectPositions.clear();
+        this.objectLodLevel.clear();
+        this.objectLodIndex.clear();
+        this.lodTypeCounters = {};
+        this._originalLodMatrices.clear();
+        this.chunks.clear();
+        this._suctionStrength.clear();
+        this._dirtyInstancedMeshes.clear();
+        this._candidateIds.clear();
+        this._affectedThisFrame.clear();
+        this._lodFrame = 0;
+        this._suctionFrame = 0;
+    }
+
     /** Map graphics preset cull distance to LOD near/far values. */
     private _applyPresetLod(preset: ReturnType<typeof getGraphicsPreset>): void {
         if (isFinite(preset.worldCullDistance)) {
@@ -1161,6 +1205,12 @@ export class WorldRenderer {
         this._frustum.setFromProjectionMatrix(this._projScreenMatrix);
 
         const camPos = camera.position;
+        const hysteresis = 15;
+        const lodNearSq = this._lodNearDistance * this._lodNearDistance;
+        const lodNearInSq = Math.max(0, this._lodNearDistance - hysteresis) ** 2;
+        const lodFarSq = this._lodFarDistance * this._lodFarDistance;
+        const lodFarInSq = Math.max(0, this._lodFarDistance - hysteresis) ** 2;
+        const treeLodFarSq = this._treeLodFarDistance * this._treeLodFarDistance;
 
         for (const chunk of this.chunks.values()) {
             const chunkInFrustum = this._frustum.intersectsBox(chunk.bounds);
@@ -1175,7 +1225,7 @@ export class WorldRenderer {
                 // Horizontal distance (camera height doesn't affect world-object LOD)
                 const dx   = pos.x - camPos.x;
                 const dz   = pos.y - camPos.z; // pos.y stores world Z
-                const dist = Math.sqrt(dx * dx + dz * dz);
+                const distSq = dx * dx + dz * dz;
 
                 const isTree  = entry.type === 'tree';
                 const current = this.objectLodLevel.get(entry.objId) ?? 'detail';
@@ -1185,23 +1235,19 @@ export class WorldRenderer {
                 if (isTree) {
                     // Trees ALWAYS use billboard — never 3D detail geometry.
                     // Only decision: billboard ('lod') vs culled ('hidden').
-                    target = (!chunkInFrustum || dist > this._treeLodFarDistance) ? 'hidden' : 'lod';
+                    target = (!chunkInFrustum || distSq > treeLodFarSq) ? 'hidden' : 'lod';
                 } else {
-                    const lodNear = this._lodNearDistance;
-                    const lodFar  = this._lodFarDistance;
-                    const hysteresis = 15;
-
-                    if (!chunkInFrustum || dist > lodFar) {
+                    if (!chunkInFrustum || distSq > lodFarSq) {
                         target = 'hidden';
-                    } else if (dist > lodNear) {
-                        target = current === 'detail' ? 'lod' : (dist < lodNear - hysteresis ? 'detail' : 'lod');
-                    } else if (current === 'lod' && dist > lodNear - hysteresis) {
+                    } else if (distSq > lodNearSq) {
+                        target = current === 'detail' ? 'lod' : (distSq < lodNearInSq ? 'detail' : 'lod');
+                    } else if (current === 'lod' && distSq > lodNearInSq) {
                         target = 'lod';
                     } else {
                         target = 'detail';
                     }
 
-                    if (current === 'hidden' && target === 'lod' && dist > lodFar - hysteresis) {
+                    if (current === 'hidden' && target === 'lod' && distSq > lodFarInSq) {
                         target = 'hidden';
                     }
                 }
@@ -1761,17 +1807,7 @@ export class WorldRenderer {
     }
 
     dispose(): void {
-        for (const key in this.instancedMeshes) {
-            for (const im of this.instancedMeshes[key]) {
-                im.geometry.dispose();
-                (im.material as THREE.Material).dispose();
-            }
-        }
-        this.instancedMeshes = {};
-        this.objectInstances.clear();
-        this.objectLodLevel.clear();
-        this.objectLodIndex.clear();
-        this._originalLodMatrices.clear();
-        this.chunks.clear();
+        this.resetWorld();
+        this.scene.remove(this.group);
     }
 }

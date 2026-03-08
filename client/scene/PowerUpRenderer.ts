@@ -65,6 +65,19 @@ export class PowerUpRenderer {
         this.scene = scene;
     }
 
+    private disposeOrb(entry: OrbEntry): void {
+        this.scene.remove(entry.group);
+        entry.group.traverse((obj) => {
+            const material = (obj as THREE.Object3D & { material?: THREE.Material | THREE.Material[] }).material;
+            if (!material) return;
+            if (Array.isArray(material)) {
+                for (const mat of material) mat.dispose();
+            } else {
+                material.dispose();
+            }
+        });
+    }
+
     /**
      * Synchronise the visible orbs with the current power-up state snapshot.
      * Called on every game:state event from the server.
@@ -103,8 +116,7 @@ export class PowerUpRenderer {
         // Use the allIds Set already built above instead of powerUps.some() linear search
         for (const [id, orb] of this.orbs) {
             if (!allIds.has(id)) {
-                this.scene.remove(orb.group);
-                (orb.mesh.material as THREE.Material).dispose();
+                this.disposeOrb(orb);
                 this.orbs.delete(id);
             }
         }
@@ -130,8 +142,7 @@ export class PowerUpRenderer {
     /** Remove all orbs from the scene (e.g. on disconnect / game reset). */
     dispose(): void {
         for (const orb of this.orbs.values()) {
-            this.scene.remove(orb.group);
-            (orb.mesh.material as THREE.Material).dispose();
+            this.disposeOrb(orb);
         }
         this.orbs.clear();
     }

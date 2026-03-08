@@ -112,12 +112,9 @@ export class Game {
     private _leaderboardSortBuf: Player[] = [];
     // ---- Pre-allocated empty activeEffects array (shared, never mutated) ----
     private static readonly _emptyEffects: ActiveEffect[] = [];
-    // ---- Pre-allocated position-only state (reused by toPositionOnlyState) ----
-    private _posOnlyState: PlayerState = {
-        id: '', name: '', x: 0, y: 0, radius: 0, rotation: 0,
-        score: 0, velocityX: 0, velocityY: 0, alive: true,
-        stamina: 0, activeEffects: Game._emptyEffects, protected: false, afk: false, lastInputSeq: 0,
-    };
+    // ---- Pre-allocated pool for position-only states (one unique object per far player) ----
+    private _posOnlyStatePool: PlayerState[] = [];
+    private _posOnlyStatePoolSize: number = 0;
 
     constructor(seed: number) {
         this.world = new World(seed);
@@ -811,6 +808,7 @@ export class Game {
         allStates: PlayerState[],
         counter: number,
     ): PlayerState[] {
+        this._posOnlyStatePoolSize = 0;
         const result: PlayerState[] = [];
 
         // Use squared distance comparisons to avoid Math.sqrt per player
@@ -852,17 +850,60 @@ export class Game {
      * position, radius, alive flag, and identity. Everything else is zeroed/defaulted.
      */
     private toPositionOnlyState(state: PlayerState): PlayerState {
-        const s = this._posOnlyState;
+        let s = this._posOnlyStatePool[this._posOnlyStatePoolSize];
+        if (!s) {
+            s = {
+                id: '', name: '', x: 0, y: 0, radius: 0, rotation: 0,
+                score: 0, velocityX: 0, velocityY: 0, alive: true,
+                stamina: 0, activeEffects: Game._emptyEffects, protected: false, afk: false, lastInputSeq: 0,
+            };
+            this._posOnlyStatePool[this._posOnlyStatePoolSize] = s;
+        }
+        this._posOnlyStatePoolSize++;
+
         s.id = state.id;
         s.name = state.name;
         s.x = state.x;
         s.y = state.y;
         s.radius = state.radius;
+        s.rotation = 0;
+        s.score = 0;
+        s.velocityX = 0;
+        s.velocityY = 0;
         s.alive = state.alive;
+        s.stamina = 0;
+        s.activeEffects = Game._emptyEffects;
         s.protected = state.protected;
         s.afk = state.afk;
         s.lastInputSeq = state.lastInputSeq;
         return s;
+    }
+
+    private getOrCreateBaselineState(prevStates: Map<string, PlayerState>, id: string): PlayerState {
+        let snapshot = prevStates.get(id);
+        if (!snapshot) {
+            snapshot = {
+                id: '', name: '', x: 0, y: 0, radius: 0, rotation: 0,
+                score: 0, velocityX: 0, velocityY: 0, alive: true,
+                stamina: 0, activeEffects: [], protected: false, afk: false, lastInputSeq: 0,
+            };
+            prevStates.set(id, snapshot);
+        }
+        return snapshot;
+    }
+
+    private copyActiveEffects(target: ActiveEffect[], source: ActiveEffect[]): void {
+        target.length = source.length;
+        for (let i = 0; i < source.length; i++) {
+            const src = source[i];
+            const dst = target[i];
+            if (dst) {
+                dst.type = src.type;
+                dst.expiresAt = src.expiresAt;
+            } else {
+                target[i] = { type: src.type, expiresAt: src.expiresAt };
+            }
+        }
     }
 
     /**
@@ -992,24 +1033,22 @@ export class Game {
         const currentIds = this._baselineIdSet;
         currentIds.clear();
         for (const p of currentPlayers) {
-            // Store a lightweight snapshot with only the fields compared in buildDelta()
-            prevStates.set(p.id, {
-                id: p.id,
-                name: p.name,
-                x: p.x,
-                y: p.y,
-                radius: p.radius,
-                rotation: p.rotation,
-                score: p.score,
-                velocityX: p.velocityX,
-                velocityY: p.velocityY,
-                alive: p.alive,
-                stamina: p.stamina,
-                protected: p.protected,
-                afk: p.afk,
-                activeEffects: p.activeEffects,
-                lastInputSeq: p.lastInputSeq,
-            });
+            const snapshot = this.getOrCreateBaselineState(prevStates, p.id);
+            snapshot.id = p.id;
+            snapshot.name = p.name;
+            snapshot.x = p.x;
+            snapshot.y = p.y;
+            snapshot.radius = p.radius;
+            snapshot.rotation = p.rotation;
+            snapshot.score = p.score;
+            snapshot.velocityX = p.velocityX;
+            snapshot.velocityY = p.velocityY;
+            snapshot.alive = p.alive;
+            snapshot.stamina = p.stamina;
+            snapshot.protected = p.protected;
+            snapshot.afk = p.afk;
+            snapshot.lastInputSeq = p.lastInputSeq;
+            this.copyActiveEffects(snapshot.activeEffects, p.activeEffects);
             currentIds.add(p.id);
         }
         // Remove players no longer in the filtered list (only if the map grew)

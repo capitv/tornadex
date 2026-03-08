@@ -112,6 +112,12 @@ export interface GameState {
     serverTime: number;        // Date.now() on the server when this tick was processed
 }
 
+export interface JoinedPayload {
+    id: string;
+    worldSize: number;
+    seed: number;
+}
+
 /**
  * Delta player state: id/x/y/rotation are always present (change every tick),
  * everything else is omitted when unchanged from the previous tick.
@@ -167,7 +173,7 @@ export interface ServerToClientEvents {
     'game:state': (state: GameState) => void;
     'game:delta': (delta: DeltaGameState) => void;
     'game:death': (data: { killerName: string }) => void;
-    'game:joined': (data: { id: string; worldSize: number; seed: number; zones: TerrainZone[]; safeZones: SafeZone[]; objects: WorldObject[] }) => void;
+    'game:joined': (data: JoinedPayload) => void;
     'ping:reply': (data: { clientTime: number }) => void;
     /** Server-initiated RTT probe — client must echo the timestamp back. */
     'server:rtt_ping': (data: { t: number }) => void;
