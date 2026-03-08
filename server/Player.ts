@@ -23,6 +23,18 @@ interface PositionSnapshot {
 const POSITION_HISTORY_SIZE = 12;
 
 export class Player {
+    private static round2(value: number): number {
+        return Math.round(value * 100) / 100;
+    }
+
+    private static round3(value: number): number {
+        return Math.round(value * 1000) / 1000;
+    }
+
+    private static round1(value: number): number {
+        return Math.round(value * 10) / 10;
+    }
+
     id: string;
     name: string;
     x: number;
@@ -341,15 +353,15 @@ export class Player {
         const s = this._cachedState;
         s.id = this.id;
         s.name = this.name;
-        s.x = this.x;
-        s.y = this.y;
-        s.radius = this.radius;
-        s.rotation = this.rotation;
-        s.score = this.score;
-        s.velocityX = this.velocityX;
-        s.velocityY = this.velocityY;
+        s.x = Player.round2(this.x);
+        s.y = Player.round2(this.y);
+        s.radius = Player.round3(this.radius);
+        s.rotation = Player.round3(this.rotation);
+        s.score = Math.floor(this.score);
+        s.velocityX = Player.round3(this.velocityX);
+        s.velocityY = Player.round3(this.velocityY);
         s.alive = this.alive;
-        s.stamina = this.stamina;
+        s.stamina = Player.round1(this.stamina);
         s.activeEffects = effects;
         s.protected = this.isSpawnProtected(now) || this.hasEffect('shield');
         s.afk = this.idleTicks > 60;

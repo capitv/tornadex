@@ -2,22 +2,16 @@
 // Main Entry Point — Wire Everything Together
 // ============================================
 
-import { SceneManager } from './scene/SceneManager.js';
-import { TornadoMesh } from './scene/TornadoMesh.js';
-import { WorldRenderer } from './scene/WorldRenderer.js';
-import { PowerUpRenderer } from './scene/PowerUpRenderer.js';
-import { ParticleSystem } from './scene/ParticleSystem.js';
-import { DestructionTrail } from './scene/DestructionTrail.js';
-import { FragmentSystem } from './scene/FragmentSystem.js';
+import { loadGameSystems, type GameSystems, type TornadoMeshInstance } from './game/loadGameSystems.js';
 import { NetworkManager } from './network/NetworkManager.js';
 import { Interpolation } from './network/Interpolation.js';
 import { InputHandler } from './input/InputHandler.js';
 import { HUD } from './ui/HUD.js';
-import { getGraphicsQuality, setGraphicsQuality } from './settings/GraphicsConfig.js';
+import { getGraphicsPreset, getGraphicsQuality, setGraphicsQuality } from './settings/GraphicsConfig.js';
 import { SKIN_LIST } from './scene/TornadoSkins.js';
 import { WORLD_SIZE } from '../shared/worldConfig.js';
-import { generateStaticWorldLayout } from '../shared/worldgen.js';
-import type { GameState, WorldObject, WorldObjectType, TerrainZone, SafeZone, PowerUp, InputPayload } from '../shared/types.js';
+import { generateStaticWorldLayout, type StaticWorldLayout } from '../shared/worldgen.js';
+import type { GameState, WorldObject, WorldObjectType, TerrainZone, SafeZone, PowerUp, InputPayload, JoinedPayload } from '../shared/types.js';
 
 // ---- DOM Elements ----
 const canvas             = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -32,6 +26,7 @@ const nameInput          = document.getElementById('player-name') as HTMLInputEl
 const seedInput          = document.getElementById('seed-input') as HTMLInputElement;
 const seedDisplay        = document.getElementById('seed-display')!;
 const seedHud            = document.getElementById('seed-hud')!;
+const PLAY_BUTTON_IDLE_LABEL = playBtn.textContent ?? 'PLAY';
 
 // Death screen stat elements (new redesigned death screen)
 const deathKillerName = document.getElementById('death-killer-name')!;
@@ -64,12 +59,9 @@ if (navigator.maxTouchPoints > 0) {
 }
 
 // ---- Core Systems ----
-const sceneManager = new SceneManager(canvas);
-const worldRenderer = new WorldRenderer(sceneManager.scene);
-const powerUpRenderer = new PowerUpRenderer(sceneManager.scene);
-const particleSystem = new ParticleSystem(sceneManager.scene);
-const destructionTrail = new DestructionTrail(sceneManager.scene);
-const fragmentSystem = new FragmentSystem(sceneManager.scene);
+let gameSystems: GameSystems | null = null;
+let gameSystemsPromise: Promise<GameSystems> | null = null;
+let renderLoopStarted = false;
 const network = new NetworkManager();
 const interpolation = new Interpolation();
 const input = new InputHandler(canvas);
@@ -179,7 +171,7 @@ const debugMetrics = {
 };
 
 // ---- Tornado Meshes (for all players) ----
-const tornadoMeshes: Map<string, TornadoMesh> = new Map();
+const tornadoMeshes: Map<string, TornadoMeshInstance> = new Map();
 
 // ---- Stamina history for remote boost inference ----
 // Stores the stamina value from the previous frame for each player ID.
@@ -192,6 +184,10 @@ let lastScore = 0;
 let worldSize = WORLD_SIZE;
 let previousObjectIds: Set<number> = new Set();
 let isPlaying = false;
+let worldReady = false;
+let pendingStateBeforeWorldReady: GameState | null = null;
+let isStartingGame = false;
+let joinWorldLoadToken = 0;
 
 // ---- Chat state (DOM created later, referenced early) ----
 let chatOpen = false;
@@ -499,14 +495,96 @@ function getSelectedSkin(): string {
     }
 })();
 
+let worldgenWorker: Worker | null = null;
+let worldgenRequestId = 0;
+const pendingWorldgenRequests = new Map<number, {
+    resolve: (layout: StaticWorldLayout) => void;
+    reject: (reason?: unknown) => void;
+}>();
+
+function setPlayButtonBusy(busy: boolean): void {
+    if (busy) {
+        playBtn.setAttribute('disabled', 'true');
+        playBtn.textContent = 'LOADING...';
+    } else {
+        playBtn.removeAttribute('disabled');
+        playBtn.textContent = PLAY_BUTTON_IDLE_LABEL;
+    }
+}
+
+function beginRenderLoop(): void {
+    if (renderLoopStarted) return;
+    renderLoopStarted = true;
+    lastTime = performance.now();
+    requestAnimationFrame(animate);
+}
+
+async function ensureGameSystems(): Promise<GameSystems> {
+    if (gameSystems) return gameSystems;
+    if (!gameSystemsPromise) {
+        gameSystemsPromise = loadGameSystems(canvas).then((systems) => {
+            gameSystems = systems;
+            beginRenderLoop();
+            return systems;
+        }).catch((err) => {
+            gameSystemsPromise = null;
+            throw err;
+        });
+    }
+    return gameSystemsPromise;
+}
+
+function getWorldgenWorker(): Worker | null {
+    if (typeof Worker === 'undefined') return null;
+    if (worldgenWorker) return worldgenWorker;
+
+    worldgenWorker = new Worker(new URL('./workers/worldgen.worker.ts', import.meta.url), { type: 'module' });
+    worldgenWorker.onmessage = (event: MessageEvent<{ requestId: number; layout: StaticWorldLayout }>) => {
+        const pending = pendingWorldgenRequests.get(event.data.requestId);
+        if (!pending) return;
+        pendingWorldgenRequests.delete(event.data.requestId);
+        pending.resolve(event.data.layout);
+    };
+    worldgenWorker.onerror = (event) => {
+        console.error('[Worldgen] Worker failed, falling back to main thread:', event.message);
+        const pending = Array.from(pendingWorldgenRequests.values());
+        pendingWorldgenRequests.clear();
+        worldgenWorker?.terminate();
+        worldgenWorker = null;
+        for (const req of pending) req.reject(event.error ?? new Error(event.message));
+    };
+    return worldgenWorker;
+}
+
+function generateStaticWorldLayoutAsync(seed: number): Promise<StaticWorldLayout> {
+    const worker = getWorldgenWorker();
+    if (!worker) {
+        return Promise.resolve(generateStaticWorldLayout(seed));
+    }
+
+    const requestId = ++worldgenRequestId;
+    return new Promise<StaticWorldLayout>((resolve, reject) => {
+        pendingWorldgenRequests.set(requestId, { resolve, reject });
+        worker.postMessage({ requestId, seed });
+    }).catch(() => generateStaticWorldLayout(seed));
+}
+
 // ---- Event Handlers ----
-playBtn.addEventListener('click', () => startGame());
+playBtn.addEventListener('click', () => {
+    void startGame().catch((err) => {
+        console.error('[Game] Failed to start:', err);
+    });
+});
 respawnBtn.addEventListener('click', () => {
     if (respawnBtn.hasAttribute('disabled')) return;
     respawnGame();
 });
 nameInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') startGame();
+    if (e.key === 'Enter') {
+        void startGame().catch((err) => {
+            console.error('[Game] Failed to start:', err);
+        });
+    }
 });
 
 // ---- Tutorial: show on page load (first visit only), dismiss before playing ----
@@ -529,8 +607,15 @@ function requestFullscreen(): void {
     }
 }
 
-function startGame(): void {
+async function startGame(): Promise<void> {
+    if (isStartingGame) return;
+    isStartingGame = true;
+    setPlayButtonBusy(true);
     requestFullscreen();
+
+    try {
+    await ensureGameSystems();
+
     playerName = nameInput.value.trim() || 'Tornado';
     mainMenu.classList.add('hidden');
     deathScreen.classList.add('hidden');
@@ -549,6 +634,8 @@ function startGame(): void {
         : undefined;
     network.join(playerName, validSeed);
     isPlaying = true;
+    worldReady = false;
+    pendingStateBeforeWorldReady = null;
     input.showControls();
     predictedLocal = null;
     displayPos = null;
@@ -603,6 +690,10 @@ function startGame(): void {
         network.measurePing();
         hudManager.updatePing(network.getPing());
     }, 2000);
+    } finally {
+        isStartingGame = false;
+        setPlayButtonBusy(false);
+    }
 }
 
 function respawnGame(): void {
@@ -634,8 +725,188 @@ function respawnGame(): void {
     resetRunStats();
 }
 
+async function handleJoined(data: JoinedPayload): Promise<void> {
+    const systems = await ensureGameSystems();
+    const { sceneManager, worldRenderer, powerUpRenderer, particleSystem } = systems;
+    const worldLoadToken = ++joinWorldLoadToken;
+
+    worldReady = false;
+    interpolation.clear();
+    previousObjectIds.clear();
+    pendingStateBeforeWorldReady = null;
+    waterZones = [];
+    _safeZones = [];
+
+    for (const [id, mesh] of tornadoMeshes) {
+        sceneManager.scene.remove(mesh.group);
+        mesh.dispose();
+        if (tornadoOverWater.has(id)) {
+            particleSystem.removeSplashRing(id);
+        }
+    }
+    tornadoMeshes.clear();
+    tornadoOverWater.clear();
+    prevStamina.clear();
+    powerUpRenderer.dispose();
+    worldRenderer.resetWorld();
+
+    const worldLayout = await generateStaticWorldLayoutAsync(data.seed);
+    if (worldLoadToken !== joinWorldLoadToken) return;
+
+    worldSize = data.worldSize;
+    hudManager.setWorldSize(worldSize);
+    worldRenderer.createGround(worldSize);
+    worldRenderer.createZones(worldLayout.zones);
+    worldRenderer.createInitialObjects(worldLayout.objects);
+
+    if (worldLayout.safeZones.length > 0) {
+        _safeZones = worldLayout.safeZones;
+        worldRenderer.createSafeZones(worldLayout.safeZones);
+    }
+
+    waterZones = worldLayout.zones.filter(z => z.type === 'water');
+    sceneManager.skybox.setWorldBounds(worldSize / 2, worldSize / 2, worldSize / 2);
+
+    if (data.seed) {
+        applySeed(data.seed);
+    }
+
+    worldReady = true;
+    if (import.meta.env.DEV) {
+        console.log(`[Game] Joined! World size: ${worldSize}, Seed: ${data.seed}, Objects: ${worldLayout.objects.length}, Water zones: ${waterZones.length}`);
+    }
+
+    if (pendingStateBeforeWorldReady) {
+        const queuedState = pendingStateBeforeWorldReady;
+        pendingStateBeforeWorldReady = null;
+        processGameState(queuedState);
+    }
+}
+
+function processGameState(state: GameState): void {
+    const systems = gameSystems;
+    if (!systems) return;
+    const { worldRenderer, powerUpRenderer, particleSystem, fragmentSystem } = systems;
+
+    // Debug: track packet type
+    debugMetrics.lastPacketType = (state as any)._isDelta ? 'delta' : 'full';
+    if ((state as any)._isDelta) debugMetrics.deltaCount++; else debugMetrics.fullCount++;
+
+    interpolation.updateState(state.players, state.serverTime);
+
+    let localState: import('../shared/types.js').PlayerState | undefined;
+    for (let i = 0; i < state.players.length; i++) {
+        if (state.players[i].id === network.id) { localState = state.players[i]; break; }
+    }
+    if (localState) {
+        const ackedSeq = localState.lastInputSeq;
+        let removeCount = 0;
+        for (let i = 0; i < pendingInputs.length; i++) {
+            if (pendingInputs[i].seq <= ackedSeq) removeCount = i + 1;
+            else break;
+        }
+        if (removeCount > 0) {
+            const remaining = pendingInputs.length - removeCount;
+            for (let i = 0; i < remaining; i++) {
+                pendingInputs[i] = pendingInputs[i + removeCount];
+            }
+            pendingInputs.length = remaining;
+        }
+
+        localPlayerRadius = localState.radius;
+        const hasSpeedPowerUp = Array.isArray(localState.activeEffects) &&
+            localState.activeEffects.some((e: { type: string }) => e.type === 'speed');
+        localHasSpeedPowerUp = hasSpeedPowerUp;
+        const powerUpSpeedMult = hasSpeedPowerUp ? POWERUP_SPEED_MULTIPLIER : 1.0;
+        if (localState.alive && pendingInputs.length > 0) {
+            let rx = localState.x;
+            let ry = localState.y;
+
+            const halfPendingTicks = pendingInputs.length * 0.5;
+            rx += localState.velocityX * halfPendingTicks;
+            ry += localState.velocityY * halfPendingTicks;
+
+            const INPUT_TICK_MS = 50;
+            for (const inp of pendingInputs) {
+                if (!inp.active) continue;
+                const boostMult = inp.boost ? BOOST_MULTIPLIER : 1.0;
+                const rawSpeed = BASE_SPEED_PER_MS * (1 - localState.radius * SPEED_SIZE_FACTOR) * boostMult * powerUpSpeedMult;
+                const minSpeed = BASE_SPEED_PER_MS * 0.3 * boostMult * powerUpSpeedMult;
+                const speed = Math.max(rawSpeed, minSpeed) * INPUT_TICK_MS;
+                rx += Math.cos(inp.angle) * speed;
+                ry += Math.sin(inp.angle) * speed;
+            }
+            const r = localState.radius;
+            rx = Math.max(r, Math.min(worldSize - r, rx));
+            ry = Math.max(r, Math.min(worldSize - r, ry));
+            predictedLocal = { x: rx, y: ry };
+        } else if (localState.alive) {
+            const vExtraTicks = 0.5;
+            predictedLocal = {
+                x: localState.x + localState.velocityX * vExtraTicks,
+                y: localState.y + localState.velocityY * vExtraTicks,
+            };
+        } else {
+            predictedLocal = null;
+        }
+
+        if (predictedLocal && !displayPos) {
+            displayPos = { x: predictedLocal.x, y: predictedLocal.y };
+        } else if (!predictedLocal) {
+            displayPos = null;
+        }
+    }
+
+    _newlyDestroyed.length = 0;
+    for (const id of state.destroyedObjectIds) {
+        if (!previousObjectIds.has(id)) {
+            previousObjectIds.add(id);
+            _newlyDestroyed.push(id);
+
+            const pos = worldRenderer.getObjectPosition(id);
+            if (pos) {
+                const type = worldRenderer.getObjectType(id) as WorldObjectType | null;
+                const elevation = worldRenderer.getElevation(pos.x, pos.y);
+                particleSystem.emitDestruction(pos.x, pos.y, type ?? 'unknown');
+                if (type) {
+                    fragmentSystem.spawnFragments(pos.x, pos.y, elevation, type);
+                }
+            }
+            if (isPlaying) runDestroyedCount++;
+        }
+    }
+
+    if (_newlyDestroyed.length > 0) {
+        worldRenderer.hideNewlyDestroyedObjects(_newlyDestroyed);
+    }
+
+    if (previousObjectIds.size > state.destroyedObjectIds.length + 500) {
+        previousObjectIds.clear();
+        for (const id of state.destroyedObjectIds) {
+            previousObjectIds.add(id);
+        }
+    }
+
+    if (state.powerUps) {
+        powerUpRenderer.update(state.powerUps);
+    }
+
+    hudManager.updateLeaderboard(state.leaderboard, playerName);
+
+    if (state.kills && state.kills.length > 0) {
+        for (const kill of state.kills) {
+            hudManager.addKill(kill.killer, kill.victim, kill.killerRadius, playerName);
+        }
+    }
+}
+
 // ---- Network Callbacks ----
 network.onJoined((data) => {
+    void handleJoined(data).catch((err) => {
+        console.error('[Game] Failed to build joined world:', err);
+    });
+    return;
+    /*
     interpolation.clear();
     previousObjectIds.clear();
     waterZones = [];
@@ -680,9 +951,17 @@ network.onJoined((data) => {
     }
 
     if (import.meta.env.DEV) console.log(`[Game] Joined! World size: ${worldSize}, Seed: ${data.seed}, Objects: ${worldLayout.objects.length}, Water zones: ${waterZones.length}`);
+    */
 });
 
 network.onState((state: GameState) => {
+    if (!worldReady) {
+        pendingStateBeforeWorldReady = state;
+        return;
+    }
+    processGameState(state);
+    return;
+    /*
     // Debug: track packet type
     debugMetrics.lastPacketType = (state as any)._isDelta ? 'delta' : 'full';
     if ((state as any)._isDelta) debugMetrics.deltaCount++; else debugMetrics.fullCount++;
@@ -838,9 +1117,11 @@ network.onState((state: GameState) => {
             hudManager.addKill(kill.killer, kill.victim, kill.killerRadius, playerName);
         }
     }
+    */
 });
 
 network.onDeath((killerName: string) => {
+    const systems = gameSystems;
     isPlaying = false;
     input.hideControls();
 
@@ -899,11 +1180,13 @@ network.onDeath((killerName: string) => {
         }, 1000);
 
         // Clear tornado meshes and any associated waterspout rings
-        for (const [id, mesh] of tornadoMeshes) {
-            sceneManager.scene.remove(mesh.group);
-            mesh.dispose();
-            if (tornadoOverWater.has(id)) {
-                particleSystem.removeSplashRing(id);
+        if (systems) {
+            for (const [id, mesh] of tornadoMeshes) {
+                systems.sceneManager.scene.remove(mesh.group);
+                mesh.dispose();
+                if (tornadoOverWater.has(id)) {
+                    systems.particleSystem.removeSplashRing(id);
+                }
             }
         }
         tornadoMeshes.clear();
@@ -927,6 +1210,7 @@ network.onReconnect(() => {
     reconnectOverlay.classList.add('hidden');
     // Resume the input loop in case it stalled
     isPlaying = true;
+    worldReady = false;
 });
 
 // ---- Render Loop ----
@@ -935,6 +1219,11 @@ let frameCount = 0;
 
 function animate(time: number): void {
     requestAnimationFrame(animate);
+
+    const systems = gameSystems;
+    if (!systems) return;
+    const { sceneManager, worldRenderer, powerUpRenderer, particleSystem, destructionTrail, fragmentSystem } = systems;
+    const graphicsPreset = getGraphicsPreset();
 
     const dt = Math.min(time - lastTime, 100); // cap delta
     lastTime = time;
@@ -1062,7 +1351,7 @@ function animate(time: number): void {
             // Create new tornado mesh
             const isLocal = id === network.id;
             const skinId = isLocal ? getSelectedSkin() : 'classic';
-            mesh = new TornadoMesh(isLocal, skinId);
+            mesh = systems.createTornadoMesh(isLocal, skinId);
             tornadoMeshes.set(id, mesh);
             sceneManager.scene.add(mesh.group);
         }
@@ -1103,7 +1392,7 @@ function animate(time: number): void {
         if (isOverWaterZone(state.x, state.y)) {
             tornadoOverWater.add(id);
             // Throttle slightly so the water pool never gets exhausted in one frame
-            if (Math.random() < 0.85) {
+            if (Math.random() < graphicsPreset.waterspoutChance) {
                 particleSystem.emitWaterspout(id, state.x, state.y, state.radius);
             }
         } else if (tornadoOverWater.has(id)) {
@@ -1136,7 +1425,7 @@ function animate(time: number): void {
             // Cloud ceiling removed — sky gradient handles atmosphere
 
             // Emit dust particles around local tornado (use predicted pos for immediacy)
-            if (Math.random() < 0.3) {
+            if (Math.random() < graphicsPreset.localDustChance) {
                 particleSystem.emitDust(camX, camY, state.radius);
             }
 
@@ -1167,8 +1456,12 @@ function animate(time: number): void {
         _deformCount++;
     }
     _tornadoDeformPositions.length = _deformCount;
-    worldRenderer.updateCloudDeformation(_tornadoDeformPositions);
-    worldRenderer.updateSuctionEffect(_tornadoDeformPositions);
+    if (graphicsPreset.cloudDeformation) {
+        worldRenderer.updateCloudDeformation(_tornadoDeformPositions);
+    }
+    if (graphicsPreset.suctionEffect) {
+        worldRenderer.updateSuctionEffect(_tornadoDeformPositions);
+    }
 
     // Update minimap using the full interpolated player list (not the throttled server list)
     // This prevents distant players from flickering on/off the minimap.
@@ -1296,8 +1589,6 @@ function animate(time: number): void {
     // Render
     sceneManager.render();
 }
-
-requestAnimationFrame(animate);
 
 // ============================================================
 // Chat System

@@ -102,14 +102,15 @@ export class NetworkManager {
         this.socket.on('game:state', (state) => {
             try {
                 this.accountPayload(state);
-                this.cachedFullState = state;
+                const normalizedState = this.normalizeFullState(state);
+                this.cachedFullState = normalizedState;
                 // Rebuild the player map from the new full state
                 this.cachedPlayerMap.clear();
-                for (const p of state.players) {
+                for (const p of normalizedState.players) {
                     this.cachedPlayerMap.set(p.id, { ...p });
                 }
                 if (this.onStateCallback) {
-                    this.onStateCallback(state);
+                    this.onStateCallback(normalizedState);
                 }
             } catch (err) {
                 console.error('[Network] Error processing game:state:', err);
@@ -349,6 +350,22 @@ export class NetworkManager {
     private resetDeltaState(): void {
         this.cachedFullState = null;
         this.cachedPlayerMap.clear();
+    }
+
+    /**
+     * Full keyframes may omit the destroyed-object baseline to avoid
+     * re-sending a growing list every few seconds. Reuse the previous baseline
+     * when that happens so downstream code still receives a normal GameState.
+     */
+    private normalizeFullState(state: GameState): GameState {
+        if (!state.destroyedObjectIdsOmitted || !this.cachedFullState) {
+            return state;
+        }
+        return {
+            ...state,
+            destroyedObjectIds: this.cachedFullState.destroyedObjectIds.slice(),
+            destroyedObjectIdsOmitted: undefined,
+        };
     }
 
     /** Get a reusable PlayerState object from the pool, or create one if needed. */

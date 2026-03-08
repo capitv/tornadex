@@ -105,6 +105,8 @@ export interface NpcVehicle {
 export interface GameState {
     players: PlayerState[];
     destroyedObjectIds: number[];
+    /** True when the server intentionally reused the previous destroyed-id baseline. */
+    destroyedObjectIdsOmitted?: boolean;
     leaderboard: LeaderboardEntry[];
     powerUps: PowerUp[];
     vehicles: NpcVehicle[];  // NPC vehicles driving on roads

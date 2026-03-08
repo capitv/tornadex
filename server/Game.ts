@@ -112,6 +112,7 @@ export class Game {
     private _leaderboardSortBuf: Player[] = [];
     // ---- Pre-allocated empty activeEffects array (shared, never mutated) ----
     private static readonly _emptyEffects: ActiveEffect[] = [];
+    private static readonly _emptyDestroyedIds: number[] = [];
     // ---- Pre-allocated pool for position-only states (one unique object per far player) ----
     private _posOnlyStatePool: PlayerState[] = [];
     private _posOnlyStatePoolSize: number = 0;
@@ -748,10 +749,12 @@ export class Game {
             this.playerSentTicks.set(viewer.id, sentTicks + 1);
 
             if (isKeyframe || !this.onPlayerDeltaUpdate) {
+                const omitDestroyedObjectIds = sentTicks > 0 && destroyedObjectIds.length > 0;
                 // Full state — refresh the delta baseline for this player
                 const state: GameState = {
                     players: filteredPlayers,
-                    destroyedObjectIds,
+                    destroyedObjectIds: omitDestroyedObjectIds ? Game._emptyDestroyedIds : destroyedObjectIds,
+                    destroyedObjectIdsOmitted: omitDestroyedObjectIds || undefined,
                     leaderboard,
                     powerUps,
                     vehicles,

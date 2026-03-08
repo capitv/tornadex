@@ -31,6 +31,14 @@ export interface GraphicsPreset {
 
     // Shadow quality
     shadows: boolean;
+
+    // Expensive atmospheric deformation effects
+    cloudDeformation: boolean;
+    suctionEffect: boolean;
+
+    // Per-frame cosmetic emission probabilities
+    localDustChance: number;
+    waterspoutChance: number;
 }
 
 // Helper: read devicePixelRatio each time a preset is accessed so the value
@@ -51,6 +59,10 @@ const PRESETS: Record<GraphicsQuality, () => GraphicsPreset> = {
         maxParticles: 250,
         worldCullDistance: 400,
         shadows: false,
+        cloudDeformation: false,
+        suctionEffect: false,
+        localDustChance: 0.12,
+        waterspoutChance: 0.25,
     }),
     medium: () => ({
         // This is the original / default setting
@@ -64,6 +76,10 @@ const PRESETS: Record<GraphicsQuality, () => GraphicsPreset> = {
         maxParticles: 500,
         worldCullDistance: Infinity,
         shadows: false,
+        cloudDeformation: true,
+        suctionEffect: true,
+        localDustChance: 0.3,
+        waterspoutChance: 0.85,
     }),
     high: () => ({
         pixelRatio: Math.min(dpr(), 3),
@@ -76,6 +92,10 @@ const PRESETS: Record<GraphicsQuality, () => GraphicsPreset> = {
         maxParticles: 1000,
         worldCullDistance: Infinity,
         shadows: true,
+        cloudDeformation: true,
+        suctionEffect: true,
+        localDustChance: 0.45,
+        waterspoutChance: 0.92,
     }),
 };
 
