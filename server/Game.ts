@@ -851,6 +851,10 @@ export class Game {
     /**
      * Strip a PlayerState down to just the fields needed for distant rendering:
      * position, radius, alive flag, and identity. Everything else is zeroed/defaulted.
+     *
+     * Returns a NEW object each call — the old singleton was shared across multiple
+     * far players in the filtered list, so the baseline stored only the last one's
+     * data, corrupting delta diffs for all earlier far players.
      */
     private toPositionOnlyState(state: PlayerState): PlayerState {
         let s = this._posOnlyStatePool[this._posOnlyStatePoolSize];

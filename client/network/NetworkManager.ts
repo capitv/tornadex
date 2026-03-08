@@ -37,6 +37,13 @@ export class NetworkManager {
     // Pre-allocated reusable containers for applyDelta (avoid per-tick allocations)
     private _deltaMap: Map<string, DeltaPlayerState> = new Map();
     private _seenIds: Set<string> = new Set();
+    /**
+     * Snapshot of prev.players saved BEFORE clearing _mergedPlayers.
+     * Fixes aliasing bug: prev.players === _mergedPlayers meant clearing
+     * _mergedPlayers also emptied prev.players, causing all players to be
+     * treated as "new" with wrong default values (radius=1, velocity=0).
+     */
+    private _prevPlayersSnapshot: PlayerState[] = [];
     private _mergedPlayers: PlayerState[] = [];
 
     // ---- PlayerState object pool (avoid per-tick allocations) ----
@@ -399,12 +406,21 @@ export class NetworkManager {
             deltaMap.set(dp.id, dp);
         }
 
+        // Snapshot prev.players BEFORE clearing _mergedPlayers, because
+        // prev.players may be the same array reference as _mergedPlayers
+        // (from the previous applyDelta return value stored in cachedFullState).
+        const prevSnapshot = this._prevPlayersSnapshot;
+        prevSnapshot.length = 0;
+        for (let i = 0; i < prev.players.length; i++) {
+            prevSnapshot[i] = prev.players[i];
+        }
+
         const mergedPlayers = this._mergedPlayers;
         mergedPlayers.length = 0;
         const seenIds = this._seenIds;
         seenIds.clear();
 
-        for (const prevPlayer of prev.players) {
+        for (const prevPlayer of prevSnapshot) {
             seenIds.add(prevPlayer.id);
             const dp = deltaMap.get(prevPlayer.id);
             if (dp) {
