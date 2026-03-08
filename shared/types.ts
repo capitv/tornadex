@@ -229,12 +229,12 @@ export interface RoomInfo {
 
 // Object points and growth values
 export const OBJECT_VALUES: Record<WorldObjectType, { points: number; growth: number }> = {
-    tree:         { points: 5,   growth: 0.02  },
-    barn:         { points: 30,  growth: 0.06  },
-    car:          { points: 15,  growth: 0.04  },
-    animal:       { points: 10,  growth: 0.03  },
-    trailer_park: { points: 100, growth: 0.08  },
-    stadium:      { points: 200, growth: 0.15  },
+    tree:         { points: 5,   growth: 0.03  },
+    barn:         { points: 30,  growth: 0.085 },
+    car:          { points: 15,  growth: 0.05  },
+    animal:       { points: 10,  growth: 0.04  },
+    trailer_park: { points: 100, growth: 0.13  },
+    stadium:      { points: 200, growth: 0.24  },
 };
 
 // Object sizes (minimum tornado radius to destroy)

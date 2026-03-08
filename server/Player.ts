@@ -163,19 +163,16 @@ export class Player {
             this.velocityY *= 0.92;
 
             // Tiered decay when idle:
-            //   > 40 ticks (~2s): base rate (1x)
-            //   > 60 ticks (~3s): fast rate (3x)
-            //   > 160 ticks (~8s): very fast rate (8x)
-            if (this.idleTicks > 160) {
-                // 8x decay — severe AFK penalty
-                this.radius = Math.max(PLAYER_MIN_RADIUS, this.radius - IDLE_DECAY_RATE * 8);
-                this.score  = Math.max(0, this.score - IDLE_SCORE_DECAY * 8);
+            //   > 60 ticks (~3s): base rate (1x)
+            //   > 100 ticks (~5s): moderate rate (2.5x)
+            //   > 220 ticks (~11s): severe AFK rate (6x)
+            if (this.idleTicks > 220) {
+                this.radius = Math.max(PLAYER_MIN_RADIUS, this.radius - IDLE_DECAY_RATE * 6);
+                this.score  = Math.max(0, this.score - IDLE_SCORE_DECAY * 6);
+            } else if (this.idleTicks > 100) {
+                this.radius = Math.max(PLAYER_MIN_RADIUS, this.radius - IDLE_DECAY_RATE * 2.5);
+                this.score  = Math.max(0, this.score - IDLE_SCORE_DECAY * 2.5);
             } else if (this.idleTicks > 60) {
-                // 3x decay — moderate AFK penalty
-                this.radius = Math.max(PLAYER_MIN_RADIUS, this.radius - IDLE_DECAY_RATE * 3);
-                this.score  = Math.max(0, this.score - IDLE_SCORE_DECAY * 3);
-            } else if (this.idleTicks > 40) {
-                // 1x decay — grace period just ended
                 this.radius = Math.max(PLAYER_MIN_RADIUS, this.radius - IDLE_DECAY_RATE);
                 this.score  = Math.max(0, this.score - IDLE_SCORE_DECAY);
             }
@@ -183,16 +180,14 @@ export class Player {
             this.stamina = Math.min(100, this.stamina + 0.4);
         }
 
-        // Active size decay — larger tornados naturally lose radius over time even while moving.
-        // Gentle below F3, noticeable at F4+. Players can still progress if actively eating.
-        if (this.radius > 2.0) {
+        // Active size decay starts only after F2 so early progression stays responsive.
+        // It ramps up gradually, then becomes more noticeable for very large tornados.
+        if (this.radius > 3.0) {
             let decayRate: number;
-            if (this.radius > 6.0) {
-                // F3+ moderate decay — big tornados shrink but not impossibly fast
-                decayRate = (this.radius - 2.0) * 0.0012 + (this.radius - 6.0) * 0.0003;
+            if (this.radius > 7.0) {
+                decayRate = (this.radius - 3.0) * 0.0005 + (this.radius - 7.0) * 0.00015;
             } else {
-                // F1-F2 very gentle decay
-                decayRate = (this.radius - 2.0) * 0.0005;
+                decayRate = (this.radius - 3.0) * 0.00018;
             }
             this.radius = Math.max(PLAYER_MIN_RADIUS, this.radius - decayRate);
         }
@@ -278,13 +273,17 @@ export class Player {
 
     grow(points: number, radiusGrowth: number): void {
         this.score += points;
-        // Diminishing growth: large tornadoes grow progressively slower.
-        // Full growth up to radius 2, then inverse scaling so sweeping
-        // over many trees as a huge tornado doesn't snowball out of control.
-        // r=2 → 100%, r=5 → 40%, r=10 → 20%, r=25 → 8%
+        // Early-game boost keeps tree pickups feeling responsive, while
+        // larger tornados still taper off to avoid runaway snowballing.
         let growthMult = 1.0;
-        if (this.radius > 2) {
-            growthMult = 2.0 / this.radius; // inversely proportional to size
+        if (this.radius < 1.5) {
+            growthMult = 2.0;
+        } else if (this.radius < 2.5) {
+            growthMult = 1.55;
+        } else if (this.radius < 4.0) {
+            growthMult = 1.15;
+        } else if (this.radius > 5.0) {
+            growthMult = 2.4 / this.radius;
         }
         this.radius = Math.min(PLAYER_MAX_RADIUS, this.radius + radiusGrowth * growthMult);
     }
