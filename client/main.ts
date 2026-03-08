@@ -10,6 +10,7 @@ import { HUD } from './ui/HUD.js';
 import { getGraphicsPreset, getGraphicsQuality, setGraphicsQuality } from './settings/GraphicsConfig.js';
 import { SKIN_LIST } from './scene/TornadoSkins.js';
 import { WORLD_SIZE } from '../shared/worldConfig.js';
+import { getFujitaCategory } from '../shared/fujita.js';
 import { generateStaticWorldLayout, type StaticWorldLayout } from '../shared/worldgen.js';
 import type { GameState, WorldObject, WorldObjectType, TerrainZone, SafeZone, PowerUp, InputPayload, JoinedPayload } from '../shared/types.js';
 
@@ -218,16 +219,6 @@ const DEATH_TIPS: string[] = [
     'Tip: F5 tornados destroy everything — reach it to dominate the map.',
     'Tip: Animals and trees are easy early-game score. Start with those.',
 ];
-
-// ---- Fujita helpers (mirrors HUD.ts thresholds) ----
-function getFujitaCategory(radius: number): string {
-    if (radius < 1.0) return 'F0';
-    if (radius < 2.0) return 'F1';
-    if (radius < 3.0) return 'F2';
-    if (radius < 4.0) return 'F3';
-    if (radius < 5.0) return 'F4';
-    return 'F5';
-}
 
 function compareCategoryGt(a: string, b: string): boolean {
     const order = ['F0', 'F1', 'F2', 'F3', 'F4', 'F5'];
@@ -1548,8 +1539,7 @@ function animate(time: number): void {
             debugMetrics.activeEffects = fx ? (Object.keys(fx).join(', ') || 'none') : 'none';
         }
         // Derive category from radius
-        const r = localPlayerRadius;
-        debugMetrics.category = r < 1.5 ? 'F0' : r < 3 ? 'F1' : r < 6 ? 'F2' : r < 10 ? 'F3' : r < 16 ? 'F4' : 'F5';
+        debugMetrics.category = getFujitaCategory(localPlayerRadius);
 
         // JS heap (Chrome only)
         const perf = performance as unknown as { memory?: { usedJSHeapSize: number } };

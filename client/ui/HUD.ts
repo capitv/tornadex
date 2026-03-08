@@ -3,18 +3,21 @@
 // ============================================
 
 import type { LeaderboardEntry, PlayerState, ActiveEffect, PowerUpType } from '../../shared/types.js';
+import { FUJITA_BANDS, getFujitaCategory, getFujitaCategoryIndex } from '../../shared/fujita.js';
 import { WORLD_SIZE } from '../../shared/worldConfig.js';
 
 
 // Fujita category thresholds (radius values)
 const FUJITA: { label: string; maxRadius: number; cssVar: string }[] = [
-    { label: 'F0', maxRadius: 1.0,  cssVar: '--f0' },
-    { label: 'F1', maxRadius: 2.0,  cssVar: '--f1' },
-    { label: 'F2', maxRadius: 3.0,  cssVar: '--f2' },
-    { label: 'F3', maxRadius: 4.0,  cssVar: '--f3' },
-    { label: 'F4', maxRadius: 5.0,  cssVar: '--f4' },
-    { label: 'F5', maxRadius: Infinity, cssVar: '--f5' },
+    { label: 'F0', maxRadius: FUJITA_BANDS[0].maxRadius, cssVar: '--f0' },
+    { label: 'F1', maxRadius: FUJITA_BANDS[1].maxRadius, cssVar: '--f1' },
+    { label: 'F2', maxRadius: FUJITA_BANDS[2].maxRadius, cssVar: '--f2' },
+    { label: 'F3', maxRadius: FUJITA_BANDS[3].maxRadius, cssVar: '--f3' },
+    { label: 'F4', maxRadius: FUJITA_BANDS[4].maxRadius, cssVar: '--f4' },
+    { label: 'F5', maxRadius: FUJITA_BANDS[5].maxRadius, cssVar: '--f5' },
 ];
+
+const CATEGORY_DOWNGRADE_HYSTERESIS = 0.12;
 
 // Death screen tips shown at random
 const DEATH_TIPS: string[] = [
@@ -73,6 +76,7 @@ export class HUD {
     private displayScore: number = 0;
     private scoreRafId: number | null = null;
     private currentCategory: string = 'F0';
+    private currentCategoryIndex: number = 0;
 
     // Local player pulse animation state
     private minimapPulse: number = 0;
@@ -161,11 +165,14 @@ export class HUD {
         // Map the bar to category segments so the fill aligns with the tick marks.
         // Each category occupies 1/6 of the bar. Within a category the fill progresses
         // linearly from its start boundary to its end boundary.
-        let catIdx = 0;
-        for (let i = 0; i < FUJITA.length; i++) {
-            if (radius < FUJITA[i].maxRadius) { catIdx = i; break; }
-            catIdx = i;
+        let catIdx = getFujitaCategoryIndex(radius);
+        if (catIdx < this.currentCategoryIndex) {
+            const previousMin = this.currentCategoryIndex === 0 ? 0 : FUJITA[this.currentCategoryIndex - 1].maxRadius;
+            if (radius > previousMin - CATEGORY_DOWNGRADE_HYSTERESIS) {
+                catIdx = this.currentCategoryIndex;
+            }
         }
+        this.currentCategoryIndex = catIdx;
 
         const catStart = catIdx === 0 ? 0 : FUJITA[catIdx - 1].maxRadius;
         const catEnd   = FUJITA[catIdx].maxRadius === Infinity ? catStart + 2 : FUJITA[catIdx].maxRadius;
@@ -515,10 +522,7 @@ export class HUD {
 
     // ---- Helpers ----
     private getCategoryForRadius(radius: number): string {
-        for (const cat of FUJITA) {
-            if (radius < cat.maxRadius) return cat.label;
-        }
-        return 'F5';
+        return getFujitaCategory(radius);
     }
 
     private getCategoryColor(cat: string): string {
