@@ -39,16 +39,10 @@ export class NetworkManager {
     private _seenIds: Set<string> = new Set();
     /**
      * Snapshot of prev.players saved BEFORE clearing _mergedPlayers.
-     * Fixes aliasing bug: prev.players === _mergedPlayers meant clearing
-     * _mergedPlayers also emptied prev.players, causing all players to be
-     * treated as "new" with wrong default values (radius=1, velocity=0).
+     * prev.players may alias _mergedPlayers (from the previous applyDelta return).
      */
     private _prevPlayersSnapshot: PlayerState[] = [];
     private _mergedPlayers: PlayerState[] = [];
-
-    // ---- PlayerState object pool (avoid per-tick allocations) ----
-    private _playerPool: PlayerState[] = [];
-    private _playerPoolIdx: number = 0;
 
     playerId: string = '';
     /** The last name passed to join(). Used to re-join automatically after reconnect. */
@@ -374,32 +368,19 @@ export class NetworkManager {
             destroyedObjectIdsOmitted: undefined,
         };
     }
-
-    /** Get a reusable PlayerState object from the pool, or create one if needed. */
-    private _getPooledPlayer(): PlayerState {
-        if (this._playerPoolIdx < this._playerPool.length) {
-            return this._playerPool[this._playerPoolIdx++];
-        }
-        const p: PlayerState = {
-            id: '', name: '', x: 0, y: 0, radius: 0, rotation: 0,
-            score: 0, velocityX: 0, velocityY: 0, alive: true,
-            stamina: 100, activeEffects: [], protected: false, afk: false, lastInputSeq: 0,
-        };
-        this._playerPool.push(p);
-        this._playerPoolIdx++;
-        return p;
-    }
-
     /**
-     * Merge a DeltaGameState onto the previous full GameState and return a
-     * new complete GameState. The previous state is not mutated.
+     * Merge a DeltaGameState onto the previous full GameState.
+     *
+     * CRITICAL DESIGN: No object pool. Previous approach used a pool that
+     * returned the SAME objects stored in prev.players, causing mergePlayer
+     * to read-and-write the same object simultaneously (aliasing corruption).
+     *
+     * Current approach:
+     *  - Existing players: merge IN-PLACE onto the prev object (zero alloc)
+     *  - New players: fresh object (rare — only on join)
      */
     private applyDelta(prev: GameState, delta: DeltaGameState): GameState {
         // ---- Players ----
-        // Reset pool index so we reuse existing PlayerState objects
-        this._playerPoolIdx = 0;
-
-        // Reuse pre-allocated containers (cleared, not re-allocated)
         const deltaMap = this._deltaMap;
         deltaMap.clear();
         for (const dp of delta.players) {
@@ -424,10 +405,10 @@ export class NetworkManager {
             seenIds.add(prevPlayer.id);
             const dp = deltaMap.get(prevPlayer.id);
             if (dp) {
-                // Merge: start from the previous full state and overwrite changed fields
+                // Merge in-place: mutate prevPlayer directly (no pool, no aliasing)
                 mergedPlayers.push(this.mergePlayer(prevPlayer, dp));
             } else {
-                // Not in this delta tick — keep the previous full state unchanged
+                // Not in this delta tick — keep the previous state object as-is
                 mergedPlayers.push(prevPlayer);
             }
         }
@@ -435,23 +416,20 @@ export class NetworkManager {
         // Handle brand-new players that weren't in prev.players at all
         for (const dp of delta.players) {
             if (!seenIds.has(dp.id)) {
-                // New player — the delta will contain all fields (server sends full data for new players)
+                // New player — fresh object (not pooled)
                 mergedPlayers.push(this.deltaToFullPlayer(dp));
             }
         }
 
         // ---- Destroyed IDs ----
-        // Append new destructions directly — no Set conversion needed since
-        // the server only sends each ID once via newDestroyedObjectIds.
         const destroyedObjectIds = prev.destroyedObjectIds;
         if (delta.newDestroyedObjectIds && delta.newDestroyedObjectIds.length > 0) {
-            // Push directly — we own this array (reconstructed state, not shared)
             for (const id of delta.newDestroyedObjectIds) {
                 destroyedObjectIds.push(id);
             }
         }
 
-        // Update the cached player map (set overwrites, no need to clear if same keys)
+        // Update the cached player map
         for (const p of mergedPlayers) {
             this.cachedPlayerMap.set(p.id, p);
         }
@@ -468,50 +446,52 @@ export class NetworkManager {
     }
 
     /**
-     * Merge a DeltaPlayerState onto a previous full PlayerState.
-     * Only fields present in the delta overwrite the previous values.
+     * Merge delta fields IN-PLACE onto the previous PlayerState.
+     * Only fields present in the delta overwrite. Returns the same object.
+     * Zero allocation — no pool needed.
      */
     private mergePlayer(prev: PlayerState, dp: DeltaPlayerState): PlayerState {
-        const p = this._getPooledPlayer();
-        p.id            = dp.id;
-        p.x             = dp.x;
-        p.y             = dp.y;
-        p.rotation      = dp.rotation;
-        p.name          = dp.name          !== undefined ? dp.name          : prev.name;
-        p.radius        = dp.radius        !== undefined ? dp.radius        : prev.radius;
-        p.score         = dp.score         !== undefined ? dp.score         : prev.score;
-        p.velocityX     = dp.velocityX     !== undefined ? dp.velocityX     : prev.velocityX;
-        p.velocityY     = dp.velocityY     !== undefined ? dp.velocityY     : prev.velocityY;
-        p.alive         = dp.alive         !== undefined ? dp.alive         : prev.alive;
-        p.stamina       = dp.stamina       !== undefined ? dp.stamina       : prev.stamina;
-        p.activeEffects = dp.activeEffects !== undefined ? dp.activeEffects : prev.activeEffects;
-        p.protected     = dp.protected     !== undefined ? dp.protected     : prev.protected;
-        p.afk           = dp.afk           !== undefined ? dp.afk           : prev.afk;
-        p.lastInputSeq  = dp.lastInputSeq  !== undefined ? dp.lastInputSeq  : prev.lastInputSeq;
-        return p;
+        // Always-present fields from delta
+        prev.id       = dp.id;
+        prev.x        = dp.x;
+        prev.y        = dp.y;
+        prev.rotation = dp.rotation;
+        // Conditionally-present fields: only overwrite if delta includes them
+        if (dp.name          !== undefined) prev.name          = dp.name;
+        if (dp.radius        !== undefined) prev.radius        = dp.radius;
+        if (dp.score         !== undefined) prev.score         = dp.score;
+        if (dp.velocityX     !== undefined) prev.velocityX     = dp.velocityX;
+        if (dp.velocityY     !== undefined) prev.velocityY     = dp.velocityY;
+        if (dp.alive         !== undefined) prev.alive         = dp.alive;
+        if (dp.stamina       !== undefined) prev.stamina       = dp.stamina;
+        if (dp.activeEffects !== undefined) prev.activeEffects = dp.activeEffects;
+        if (dp.protected     !== undefined) prev.protected     = dp.protected;
+        if (dp.afk           !== undefined) prev.afk           = dp.afk;
+        if (dp.lastInputSeq  !== undefined) prev.lastInputSeq  = dp.lastInputSeq;
+        return prev;
     }
 
     /**
-     * Convert a fully-populated DeltaPlayerState (sent for new players) into a
-     * complete PlayerState, using safe defaults for any missing optional fields.
+     * Convert a DeltaPlayerState (new player) into a complete PlayerState.
+     * Creates a fresh object — only called when a genuinely new player joins (rare).
      */
     private deltaToFullPlayer(dp: DeltaPlayerState): PlayerState {
-        const p = this._getPooledPlayer();
-        p.id            = dp.id;
-        p.x             = dp.x;
-        p.y             = dp.y;
-        p.rotation      = dp.rotation;
-        p.name          = dp.name          ?? '';
-        p.radius        = dp.radius        ?? 1;
-        p.score         = dp.score         ?? 0;
-        p.velocityX     = dp.velocityX     ?? 0;
-        p.velocityY     = dp.velocityY     ?? 0;
-        p.alive         = dp.alive         ?? true;
-        p.stamina       = dp.stamina       ?? 100;
-        p.activeEffects = dp.activeEffects ?? [];
-        p.protected     = dp.protected     ?? false;
-        p.afk           = dp.afk           ?? false;
-        p.lastInputSeq  = dp.lastInputSeq  ?? 0;
-        return p;
+        return {
+            id:            dp.id,
+            x:             dp.x,
+            y:             dp.y,
+            rotation:      dp.rotation,
+            name:          dp.name          ?? '',
+            radius:        dp.radius        ?? 1,
+            score:         dp.score         ?? 0,
+            velocityX:     dp.velocityX     ?? 0,
+            velocityY:     dp.velocityY     ?? 0,
+            alive:         dp.alive         ?? true,
+            stamina:       dp.stamina       ?? 100,
+            activeEffects: dp.activeEffects ?? [],
+            protected:     dp.protected     ?? false,
+            afk:           dp.afk           ?? false,
+            lastInputSeq:  dp.lastInputSeq  ?? 0,
+        };
     }
 }
