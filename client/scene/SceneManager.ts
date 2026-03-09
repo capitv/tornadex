@@ -31,6 +31,8 @@ export class SceneManager {
 
     // Debounce timer for resize handler
     private _resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    // True while WebGL context is lost (mobile tab switch, memory pressure)
+    private _contextLost: boolean = false;
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -97,6 +99,28 @@ export class SceneManager {
             this._resizeTimer = setTimeout(() => this.onResize(), 150);
         });
 
+        // WebGL context loss/restore — mobile browsers kill the context under
+        // memory pressure, tab switches, or screen lock. Without recovery the
+        // canvas stays black while the HUD keeps rendering on top.
+        this.canvas.addEventListener('webglcontextlost', (e) => {
+            e.preventDefault(); // required to allow restore
+            console.warn('[SceneManager] WebGL context lost');
+            this._contextLost = true;
+        });
+        this.canvas.addEventListener('webglcontextrestored', () => {
+            console.log('[SceneManager] WebGL context restored — reinitialising renderer');
+            this._contextLost = false;
+            const p = getGraphicsPreset();
+            this.renderer.dispose();
+            this.renderer = this.createRenderer(p.antialias);
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+            this.renderer.setPixelRatio(p.pixelRatio);
+            this.renderer.shadowMap.enabled = p.shadows;
+            if (p.shadows) {
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            }
+        });
+
         // React to graphics quality changes
         onGraphicsChange((newPreset) => {
             this.applyPreset(newPreset);
@@ -106,11 +130,24 @@ export class SceneManager {
     // ---- Renderer helpers ----
 
     private createRenderer(antialias: boolean): THREE.WebGLRenderer {
-        return new THREE.WebGLRenderer({
-            canvas: this.canvas,
-            antialias,
-            powerPreference: 'high-performance',
-        });
+        try {
+            return new THREE.WebGLRenderer({
+                canvas: this.canvas,
+                antialias,
+                powerPreference: 'high-performance',
+                // Allow software rendering on low-end mobile GPUs instead of failing
+                failIfMajorPerformanceCaveat: false,
+            });
+        } catch (e) {
+            // Retry without antialias — some mobile drivers only fail with AA
+            console.warn('[SceneManager] WebGL init failed, retrying without antialias:', e);
+            return new THREE.WebGLRenderer({
+                canvas: this.canvas,
+                antialias: false,
+                powerPreference: 'default',
+                failIfMajorPerformanceCaveat: false,
+            });
+        }
     }
 
     /**
@@ -204,6 +241,9 @@ export class SceneManager {
     }
 
     render(): void {
+        // Skip rendering while WebGL context is lost (mobile tab switch, etc.)
+        // The context-restored handler will reinitialise the renderer automatically.
+        if (this._contextLost) return;
         this.renderer.render(this.scene, this.camera);
     }
 

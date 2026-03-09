@@ -37,7 +37,18 @@ export async function loadGameSystems(canvas: HTMLCanvasElement): Promise<GameSy
         import('../scene/TornadoMesh.js'),
     ]);
 
-    const sceneManager = new SceneManager(canvas);
+    let sceneManager;
+    try {
+        sceneManager = new SceneManager(canvas);
+    } catch (e) {
+        // WebGL completely unavailable — show user-facing error instead of black screen
+        console.error('[Fatal] WebGL init failed:', e);
+        const err = document.createElement('div');
+        err.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#111;color:#fff;font:600 1.2rem/1.6 Outfit,sans-serif;text-align:center;padding:2rem;';
+        err.innerHTML = 'Your browser could not start WebGL.<br>Try closing other tabs or updating your browser.';
+        document.body.appendChild(err);
+        throw e; // stop module execution
+    }
 
     return {
         sceneManager,
