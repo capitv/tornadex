@@ -160,6 +160,54 @@ body {
   border-bottom: none;
 }
 
+/* ==== Supercell Banner ==== */
+.supercell-banner {
+  position: absolute;
+  top: 15%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-20px);
+  background: rgba(40, 0, 15, 0.85);
+  border: 2px solid #ff0055;
+  padding: 1rem 2rem;
+  border-radius: 12px;
+  text-align: center;
+  box-shadow: 0 0 30px rgba(255, 0, 85, 0.5), inset 0 0 15px rgba(255, 0, 85, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  z-index: 1000;
+}
+
+.supercell-banner.active {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  animation: supercellPulse 1.5s infinite alternate;
+}
+
+.supercell-title {
+  color: #ff0055;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 900;
+  font-size: 1.8rem;
+  letter-spacing: 2px;
+  text-shadow: 0 0 10px rgba(255, 0, 85, 0.8);
+  margin-bottom: 0.5rem;
+}
+
+.supercell-sub {
+  color: #fff;
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.4;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+}
+
+@keyframes supercellPulse {
+  from { box-shadow: 0 0 20px rgba(255, 0, 85, 0.4), inset 0 0 10px rgba(255, 0, 85, 0.2); }
+  to { box-shadow: 0 0 40px rgba(255, 0, 85, 0.8), inset 0 0 20px rgba(255, 0, 85, 0.5); }
+}
+
 .tutorial-btn {
   font-family: var(--font);
   font-size: 1.2rem;

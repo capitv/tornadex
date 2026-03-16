@@ -51,6 +51,7 @@ export class Player {
     velocityY: number = 0;
     alive: boolean = true;
     stamina: number = 100; // 0-100
+    inSupercell: boolean = false;
 
     // Map of power-up type → tick timestamp when effect expires
     activeEffects: Map<PowerUpType, number> = new Map();
@@ -159,14 +160,18 @@ export class Player {
             this.velocityY = Math.sin(this.input.angle) * clampedSpeed;
 
             // Stamina drain/regen
-            if (canBoost) {
+            if (canBoost && !this.inSupercell) {
                 this.stamina = Math.max(0, this.stamina - 4.0); // Drains in ~1.25s
                 // When stamina runs out, enforce a 1.5-second cooldown (30 ticks)
                 if (this.stamina <= 0) {
                     this.boostCooldown = 30;
                 }
             } else {
-                this.stamina = Math.min(100, this.stamina + 0.4); // Regens in ~12.5s
+                if (this.inSupercell) {
+                    this.stamina = 100;
+                } else {
+                    this.stamina = Math.min(100, this.stamina + 0.4); // Regens in ~12.5s
+                }
             }
         } else {
             this.idleTicks++;
@@ -189,7 +194,11 @@ export class Player {
                 this.score  = Math.max(0, this.score - IDLE_SCORE_DECAY);
             }
             // Regen stamina while idle too
-            this.stamina = Math.min(100, this.stamina + 0.4);
+            if (this.inSupercell) {
+                this.stamina = 100;
+            } else {
+                this.stamina = Math.min(100, this.stamina + 0.4);
+            }
         }
 
         // Active size decay starts only after F2 so early progression stays responsive.
@@ -297,7 +306,14 @@ export class Player {
         } else if (this.radius > 5.0) {
             growthMult = 2.4 / this.radius;
         }
-        this.radius = Math.min(PLAYER_MAX_RADIUS, this.radius + radiusGrowth * growthMult);
+        
+        let finalGrowth = radiusGrowth * growthMult;
+        if (this.inSupercell) {
+            // Apply constant multiplier from constants directly
+            finalGrowth *= 2.0; 
+        }
+
+        this.radius = Math.min(PLAYER_MAX_RADIUS, this.radius + finalGrowth);
     }
 
     canAbsorb(other: Player): boolean {

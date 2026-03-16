@@ -101,3 +101,9 @@ export const SPAWN_PROTECTION_MS = 1500;
 // ---- Safe Haven Zones ----
 /** Tornadoes with radius strictly below this value are protected inside safe zones (F0/F1 only). */
 export const SAFE_ZONE_MAX_RADIUS = 1.5;
+
+// ---- Supercell Global Event ----
+export const SUPERCELL_DURATION_TICKS = TICK_RATE * 60; // 60 seconds
+export const SUPERCELL_COOLDOWN_TICKS = TICK_RATE * 45; // 45 seconds
+export const SUPERCELL_RADIUS = 150; // Concentrated zone in the center
+export const SUPERCELL_GROWTH_MULT = 2.0;

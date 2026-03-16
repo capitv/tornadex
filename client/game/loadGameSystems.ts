@@ -5,6 +5,7 @@ import type { PowerUpRenderer } from '../scene/PowerUpRenderer.js';
 import type { SceneManager } from '../scene/SceneManager.js';
 import type { TornadoMesh } from '../scene/TornadoMesh.js';
 import type { WorldRenderer } from '../scene/WorldRenderer.js';
+import { SupercellRenderer } from '../scene/SupercellRenderer.js';
 
 export type TornadoMeshInstance = TornadoMesh;
 
@@ -15,6 +16,7 @@ export interface GameSystems {
     particleSystem: ParticleSystem;
     destructionTrail: DestructionTrail;
     fragmentSystem: FragmentSystem;
+    supercellRenderer: SupercellRenderer;
     createTornadoMesh: (isLocal: boolean, skinId: string) => TornadoMeshInstance;
 }
 
@@ -35,6 +37,7 @@ export async function loadGameSystems(canvas: HTMLCanvasElement): Promise<GameSy
         import('../scene/DestructionTrail.js'),
         import('../scene/FragmentSystem.js'),
         import('../scene/TornadoMesh.js'),
+        import('../scene/SupercellRenderer.js'),
     ]);
 
     let sceneManager;
@@ -57,6 +60,7 @@ export async function loadGameSystems(canvas: HTMLCanvasElement): Promise<GameSy
         particleSystem: new ParticleSystem(sceneManager.scene),
         destructionTrail: new DestructionTrail(sceneManager.scene),
         fragmentSystem: new FragmentSystem(sceneManager.scene),
+        supercellRenderer: new SupercellRenderer(sceneManager.scene),
         createTornadoMesh: (isLocal, skinId) => new TornadoMesh(isLocal, skinId),
     };
 }

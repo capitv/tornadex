@@ -112,6 +112,16 @@ export class HUD {
             staminaBarWrap.appendChild(this.staminaCooldownEl);
         }
 
+        // Supercell global event banner
+        this.supercellBanner = document.createElement('div');
+        this.supercellBanner.id = 'supercell-banner';
+        this.supercellBanner.className = 'supercell-banner';
+        this.supercellBanner.innerHTML = `
+            <div class="supercell-title">⚠️ SUPERCELL WARNING ⚠️</div>
+            <div class="supercell-sub">A massive storm is forming at the center!<br>2x Growth & Infinite Stamina inside!</div>
+        `;
+        document.body.appendChild(this.supercellBanner);
+
         // Max size indicator near the growth bar
         this.maxSizeEl = document.createElement('div');
         this.maxSizeEl.id = 'max-size-msg';
@@ -329,6 +339,30 @@ export class HUD {
         ctx.lineWidth = 1;
         ctx.strokeRect(0, 0, w, h);
 
+        // Draw Supercell region if active
+        // Only drawn when the state indicates it's active
+        if (this.currentSupercellState?.active) {
+            const sc = this.currentSupercellState;
+            const sx = sc.x * scale;
+            const sy = sc.y * scale;
+            const sr = sc.radius * scale;
+
+            ctx.fillStyle = 'rgba(255, 0, 85, 0.15)'; // transparent red
+            ctx.shadowColor = 'rgba(255, 0, 85, 0.5)';
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Supercell border pulse (faster than player pulse)
+            const scPulseAlpha = 0.5 + 0.5 * Math.sin(this.minimapPulse * 2.0);
+            ctx.strokeStyle = `rgba(255, 0, 85, ${0.4 + 0.4 * scPulseAlpha})`;
+            ctx.lineWidth = 1 + scPulseAlpha;
+            ctx.stroke();
+            
+            ctx.shadowBlur = 0; // reset
+        }
+
         // Draw other players first (so local is always on top)
         const others: PlayerState[] = [];
         let local: PlayerState | null = null;
@@ -381,6 +415,30 @@ export class HUD {
 
         ctx.globalAlpha = 1;
         ctx.shadowBlur  = 0;
+    }
+
+    // ---- Supercell Event ----
+    private currentSupercellState: import('../../shared/types.js').SupercellState | null = null;
+    private supercellBanner: HTMLElement;
+    private supercellBannerTimer: ReturnType<typeof setTimeout> | null = null;
+
+    updateSupercell(state: import('../../shared/types.js').SupercellState | undefined): void {
+        if (!state) return;
+
+        // Detect transition from inactive -> active
+        if (!this.currentSupercellState?.active && state.active) {
+            // Show banner
+            this.supercellBanner.classList.add('active');
+            
+            // Auto hide after 5 seconds
+            if (this.supercellBannerTimer !== null) clearTimeout(this.supercellBannerTimer);
+            this.supercellBannerTimer = setTimeout(() => {
+                this.supercellBanner.classList.remove('active');
+            }, 6000);
+        }
+
+        // Cache state for minimap rendering
+        this.currentSupercellState = state;
     }
 
     // ---- Power-up Effects ----

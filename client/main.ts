@@ -1407,6 +1407,7 @@ function animate(time: number): void {
                 hudManager.updateSize(state.radius, 7);
                 hudManager.updateStamina(state.stamina, currentInput.boost);
                 hudManager.updatePowerUps(state.activeEffects ?? []);
+                hudManager.updateSupercell(network.getCachedFullState()?.supercell);
             }
             lastScore = state.score;
 
@@ -1490,6 +1491,10 @@ function animate(time: number): void {
 
     // LOD + Frustum culling update (throttled internally to every 15 frames)
     worldRenderer.updateLOD(sceneManager.camera);
+
+    // Update Supercell visuals and UI based on cached game state
+    const cachedState = network.getCachedFullState();
+    systems.supercellRenderer.update(cachedState?.supercell, dt / 1000);
 
     // Update particles and fragment animations
     particleSystem.update(dt);

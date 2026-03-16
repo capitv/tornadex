@@ -293,16 +293,17 @@ export class NetworkManager {
      * Estimated bytes received per second (updated once per second).
      * Based on JSON.stringify().length of each incoming payload.
      */
-    getBytesPerSec(): number {
-        return this.currentBytesPerSec;
-    }
+    getBytesPerSec(): number { return this.currentBytesPerSec; }
 
     /**
      * Number of game-state packets received per second (updated once per second).
      */
-    getPacketsPerSec(): number {
-        return this.currentPacketsPerSec;
-    }
+    getPacketsPerSec(): number { return this.currentPacketsPerSec; }
+
+    getCachedFullState(): GameState | null { return this.cachedFullState; }
+
+    // ---- Disconnect / Reconect ----
+    disconnect(): void {}
 
     /**
      * Accumulate a received payload's estimated byte size.
@@ -440,6 +441,7 @@ export class NetworkManager {
             leaderboard:        delta.leaderboard  ?? prev.leaderboard,
             powerUps:           delta.powerUps     ?? prev.powerUps,
             vehicles:           delta.vehicles     ?? prev.vehicles,
+            supercell:          delta.supercell    ?? prev.supercell,
             kills:              delta.kills,
             serverTime:         delta.serverTime,
         };

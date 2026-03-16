@@ -18,6 +18,7 @@ import {
     SAFE_ZONE_MAX_RADIUS,
     POWERUP_COLLECT_RADIUS, GROWTH_BOOST_MULTIPLIER,
     VEHICLE_POINTS, VEHICLE_GROWTH, VEHICLE_SIZE, VEHICLE_COLLISION_RADIUS,
+    SUPERCELL_DURATION_TICKS, SUPERCELL_COOLDOWN_TICKS, SUPERCELL_RADIUS, WORLD_SIZE
 } from './constants.js';
 
 const logger = new Logger('Game');
@@ -59,6 +60,17 @@ export class Game {
     private onTickMetrics: ((tickMs: number) => void) | null = null;
     /** Optional hook called when a player should be kicked (anti-cheat or AFK). */
     private onPlayerKick: ((playerId: string, reason: string) => void) | null = null;
+
+    // ---- Supercell State ----
+    supercell: import('../shared/types.js').SupercellState = {
+        active: false,
+        x: WORLD_SIZE / 2,
+        y: WORLD_SIZE / 2,
+        radius: SUPERCELL_RADIUS,
+        timeRemaining: SUPERCELL_COOLDOWN_TICKS
+    };
+    private previousSupercellJson: Map<string, string> = new Map();
+    private _cachedSupercellJson: string = '';
 
     // ---- AFK session timeout tracking ----
     /** Last time (Date.now() epoch ms) each player sent input, keyed by socket ID. */
@@ -200,6 +212,7 @@ export class Game {
         this.previousLeaderboardJson.set(id, '');
         this.previousPowerUps.set(id, '');
         this.previousVehicles.set(id, '');
+        this.previousSupercellJson.set(id, '');
         this.acknowledgedDestroyedIds.set(id, new Set());
         this.playerSentTicks.set(id, 0);
         this.lastInputTime.set(id, Date.now());
@@ -234,6 +247,7 @@ export class Game {
             this.previousLeaderboardJson.delete(id);
             this.previousPowerUps.delete(id);
             this.previousVehicles.delete(id);
+            this.previousSupercellJson.delete(id);
             this.acknowledgedDestroyedIds.delete(id);
             this.playerSentTicks.delete(id);
             this.playerJoinTimes.delete(id);
@@ -356,6 +370,7 @@ export class Game {
         this.previousLeaderboardJson.delete(oldSocketId);
         this.previousPowerUps.delete(oldSocketId);
         this.previousVehicles.delete(oldSocketId);
+        this.previousSupercellJson.delete(oldSocketId);
         this.acknowledgedDestroyedIds.delete(oldSocketId);
         this.playerSentTicks.delete(oldSocketId);
 
@@ -363,6 +378,7 @@ export class Game {
         this.previousLeaderboardJson.set(newSocketId, '');
         this.previousPowerUps.set(newSocketId, '');
         this.previousVehicles.set(newSocketId, '');
+        this.previousSupercellJson.set(newSocketId, '');
         this.acknowledgedDestroyedIds.set(newSocketId, new Set());
         this.playerSentTicks.set(newSocketId, 0);
 
@@ -399,6 +415,22 @@ export class Game {
         // Reset per-tick anti-cheat tracking
         this.objectsDestroyedByPlayer.clear();
         this.absorbedThisTick.clear();
+
+        // Update Supercell global event
+        this.supercell.timeRemaining--;
+        if (this.supercell.timeRemaining <= 0) {
+            if (this.supercell.active) {
+                // Event over -> back to cooldown
+                this.supercell.active = false;
+                this.supercell.timeRemaining = SUPERCELL_COOLDOWN_TICKS;
+                logger.info('Supercell event ended. Cooldown started.');
+            } else {
+                // Cooldown over -> event starts
+                this.supercell.active = true;
+                this.supercell.timeRemaining = SUPERCELL_DURATION_TICKS;
+                logger.info('Supercell event started!');
+            }
+        }
 
         // Update bot AI — must happen BEFORE player physics so that bot inputs
         // are set in time for this tick's movement calculations.
@@ -442,6 +474,17 @@ export class Game {
                     player.radius = PLAYER_MIN_RADIUS;
                 }
             }
+
+            // Check Supercell logic
+            let inSupercell = false;
+            if (this.supercell.active) {
+                const scDx = player.x - this.supercell.x;
+                const scDy = player.y - this.supercell.y;
+                if ((scDx * scDx + scDy * scDy) <= (this.supercell.radius * this.supercell.radius)) {
+                    inSupercell = true;
+                }
+            }
+            player.inSupercell = inSupercell; // Let player know it's in the supercell for physics/growth
 
             player.update(dt, speedMult, now);
 
@@ -728,6 +771,7 @@ export class Game {
         this._cachedLeaderboardJson = JSON.stringify(leaderboard);
         this._cachedPowerUpsJson = JSON.stringify(powerUps);
         this._cachedVehiclesJson = JSON.stringify(vehicles);
+        this._cachedSupercellJson = JSON.stringify(this.supercell);
 
         // Send a personalised state to each connected player
         for (const viewer of this.players.values()) {
@@ -758,6 +802,7 @@ export class Game {
                     leaderboard,
                     powerUps,
                     vehicles,
+                    supercell: this.supercell,
                     kills: pendingKills.length > 0 ? pendingKills : undefined,
                     serverTime: tickServerTime,
                 };
@@ -1009,6 +1054,11 @@ export class Game {
         const curVehJson = this._cachedVehiclesJson;
         const vehiclesDelta = curVehJson !== prevVehJson ? currentVehicles : undefined;
 
+        // ---- Supercell: only send when changed (use pre-cached JSON) ----
+        const prevSC = this.previousSupercellJson.get(viewerId);
+        const curSCJson = this._cachedSupercellJson;
+        const supercellDelta = curSCJson !== prevSC ? this.supercell : undefined;
+
         const delta: DeltaGameState = {
             players:    deltaPlayers,
             serverTime: serverTime,
@@ -1017,6 +1067,7 @@ export class Game {
         if (leaderboardDelta)            delta.leaderboard            = leaderboardDelta;
         if (powerUpsDelta)               delta.powerUps               = powerUpsDelta;
         if (vehiclesDelta)               delta.vehicles               = vehiclesDelta;
+        if (supercellDelta)              delta.supercell              = supercellDelta;
         if (pendingKills.length > 0)     delta.kills                  = pendingKills;
 
         return delta;
@@ -1073,6 +1124,9 @@ export class Game {
 
         // Update vehicles baseline — reuse the pre-cached JSON string
         this.previousVehicles.set(viewerId, this._cachedVehiclesJson);
+
+        // Update supercell baseline — reuse the pre-cached JSON string
+        this.previousSupercellJson.set(viewerId, this._cachedSupercellJson);
 
         // Mark only newly-destroyed IDs as acknowledged (avoids iterating the full array)
         const ackedIds = this.acknowledgedDestroyedIds.get(viewerId)!;

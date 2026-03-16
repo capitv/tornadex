@@ -69,6 +69,15 @@ export interface SafeZone {
     radius: number;
 }
 
+/** Global map event: A large storm at the center of the map. */
+export interface SupercellState {
+    active: boolean;
+    x: number;
+    y: number;
+    radius: number;
+    timeRemaining: number; // ticks remaining for either the active duration or the cooldown
+}
+
 export interface KillEvent {
     killer: string;
     victim: string;
@@ -110,6 +119,7 @@ export interface GameState {
     leaderboard: LeaderboardEntry[];
     powerUps: PowerUp[];
     vehicles: NpcVehicle[];  // NPC vehicles driving on roads
+    supercell?: SupercellState;
     kills?: KillEvent[];
     serverTime: number;        // Date.now() on the server when this tick was processed
 }
@@ -154,6 +164,7 @@ export interface DeltaGameState {
     leaderboard?: LeaderboardEntry[];            // Only present when it changed
     powerUps?: PowerUp[];                        // Only present when it changed
     vehicles?: NpcVehicle[];                    // Only present when any vehicle state changed
+    supercell?: SupercellState;                 // Only present when supercell state changed
     kills?: KillEvent[];                         // Only present when non-empty
 }
 
