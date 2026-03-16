@@ -1345,9 +1345,12 @@ function animate(time: number): void {
             mesh = systems.createTornadoMesh(isLocal, skinId);
             tornadoMeshes.set(id, mesh);
             sceneManager.scene.add(mesh.group);
+            // Set radius instantly on first frame to avoid a 1-frame flash at F0 size
+            mesh.setRadiusImmediate(state.radius);
+        } else {
+            // Subsequent frames: lerp smoothly toward the new radius
+            mesh.setRadius(state.radius);
         }
-
-        mesh.setRadius(state.radius);
 
         // For the local player use the extrapolated display position so the
         // tornado reacts to input instantly and moves smoothly between server ticks.

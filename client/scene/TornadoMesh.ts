@@ -103,6 +103,8 @@ export class TornadoMesh {
     private visibleChunks: number = 0;
 
     private baseRadius: number = 1;
+    /** Target radius that baseRadius lerps toward each frame. */
+    private targetRadius: number = 1;
     private time: number = 0;
     private isLocal: boolean;
 
@@ -795,6 +797,19 @@ export class TornadoMesh {
 
     update(dt: number, rotation: number): void {
         this.time += dt * 0.012;
+
+        // Smoothly lerp baseRadius toward targetRadius to avoid visual jumping
+        // between server ticks. Rate 0.008/ms → ~12% per frame at 60fps,
+        // reaches 95% of target in ~200ms.
+        if (this.baseRadius !== this.targetRadius) {
+            const lerpFactor = 1 - Math.exp(-dt * 0.008);
+            this.baseRadius += (this.targetRadius - this.baseRadius) * lerpFactor;
+            // Snap when close enough to avoid lingering micro-differences
+            if (Math.abs(this.targetRadius - this.baseRadius) < 0.005) {
+                this.baseRadius = this.targetRadius;
+            }
+        }
+
         const r = this.baseRadius;
 
         // Calculate smooth velocity for leaning effect
@@ -1374,8 +1389,9 @@ export class TornadoMesh {
     }
 
     setRadius(radius: number): void {
-        this.baseRadius = radius;
+        this.targetRadius = radius;
 
+        // These visual properties can update immediately (non-geometric)
         (this.debris.material as THREE.PointsMaterial).size = 0.2 + Math.min(radius * 0.05, 0.8);
         (this.dustRing.material as THREE.PointsMaterial).size = 0.6 + Math.min(radius * 0.15, 2.0);
 
@@ -1391,6 +1407,16 @@ export class TornadoMesh {
         this.visibleBoxes  = Math.round(BOX_SLOTS   * fraction);
         this.visibleFlats  = Math.round(FLAT_SLOTS  * fraction);
         this.visibleChunks = Math.round(CHUNK_SLOTS * fraction);
+    }
+
+    /**
+     * Set radius instantly without lerp — used when creating a new mesh so it
+     * appears at the correct size on the very first frame.
+     */
+    setRadiusImmediate(radius: number): void {
+        this.baseRadius = radius;
+        this.targetRadius = radius;
+        this.setRadius(radius);
     }
 
     /**
