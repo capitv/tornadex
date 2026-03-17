@@ -121,7 +121,8 @@ export class Game {
     // ---- Class-level safeZoneCache (cleared each tick instead of reallocated) ----
     private safeZoneCache: Map<string, boolean> = new Map();
     // ---- Reusable Set for P×P collision pair dedup (avoids allocation each tick) ----
-    private _checkedPairsSet: Set<string> = new Set();
+    // Uses numeric keys (idxA * 64 + idxB) instead of strings to eliminate per-pair string alloc.
+    private _checkedPairsSet: Set<number> = new Set();
 
     // ---- Cached tick timestamp (Date.now() captured once per tick) ----
     private tickTimestamp: number = 0;
@@ -572,6 +573,8 @@ export class Game {
 
         // Use SpatialGrid to find nearby player pairs instead of O(n^2).
         // Track checked pairs to avoid processing A-B and B-A.
+        // Assign per-tick sequential indices so we can use a numeric pair key (no string alloc).
+        for (let i = 0; i < playerArray.length; i++) playerArray[i]._tickIdx = i;
         const checkedPairs = this._checkedPairsSet;
         checkedPairs.clear();
         for (let i = 0; i < playerArray.length; i++) {
@@ -586,8 +589,10 @@ export class Game {
                 const b = this.players.get(entity.id as string);
                 if (!b || !b.alive || b === a) continue;
 
-                // Build a canonical pair key to avoid checking both A-B and B-A
-                const pairKey = a.id < b.id ? a.id + '|' + b.id : b.id + '|' + a.id;
+                // Build a canonical numeric pair key to avoid checking both A-B and B-A.
+                // MAX_PLAYERS(50)+bots(8)=58 < 64, so idxA*64+idxB is always unique per pair.
+                const ia = a._tickIdx, ib = b._tickIdx;
+                const pairKey = ia < ib ? ia * 64 + ib : ib * 64 + ia;
                 if (checkedPairs.has(pairKey)) continue;
                 checkedPairs.add(pairKey);
 

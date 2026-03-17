@@ -46,6 +46,8 @@ export class Player {
     rotation: number = 0;
     /** Used by SpatialGrid for allocation-free dedup. */
     _queryGen?: number;
+    /** Per-tick sequential index assigned before the collision loop. Used for numeric pair-key dedup. */
+    _tickIdx: number = -1;
     score: number = 0;
     velocityX: number = 0;
     velocityY: number = 0;

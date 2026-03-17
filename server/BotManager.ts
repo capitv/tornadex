@@ -124,8 +124,12 @@ interface BotState {
     nameIndex: number;
 
     // ---- Stuck detection ----
-    /** Ring buffer of sampled positions (sampled every STUCK_SAMPLE_INTERVAL ticks). */
-    positionHistory: Array<{ x: number; y: number }>;
+    /** Pre-allocated ring buffer of sampled positions (avoids push/shift/reset allocations). */
+    positionHistory: [{ x: number; y: number }, { x: number; y: number }, { x: number; y: number }, { x: number; y: number }, { x: number; y: number }];
+    /** Write-head into positionHistory ring buffer. */
+    positionHistoryHead: number;
+    /** How many valid entries are in the ring buffer (0..STUCK_HISTORY_LENGTH). */
+    positionHistoryCount: number;
     /** Counts up to STUCK_SAMPLE_INTERVAL, then resets and records a sample. */
     stuckSampleTimer: number;
     /** Ticks remaining in escape mode (>0 = bot is executing a stuck-escape manoeuvre). */
@@ -218,7 +222,8 @@ export class BotManager {
                     // Pick a fresh wander target after respawn and reset stuck state
                     state.wanderTarget = this.randomWorldPoint();
                     state.wanderTicksLeft = this.randomWanderTicks();
-                    state.positionHistory = [];
+                    state.positionHistoryHead = 0;
+                    state.positionHistoryCount = 0;
                     state.stuckSampleTimer = 0;
                     state.escapeTicksLeft = 0;
                 }
@@ -231,15 +236,17 @@ export class BotManager {
             state.stuckSampleTimer++;
             if (state.stuckSampleTimer >= STUCK_SAMPLE_INTERVAL) {
                 state.stuckSampleTimer = 0;
-                state.positionHistory.push({ x: player.x, y: player.y });
-                // Keep only the last STUCK_HISTORY_LENGTH samples
-                if (state.positionHistory.length > STUCK_HISTORY_LENGTH) {
-                    state.positionHistory.shift();
-                }
+                // Ring buffer: write at head, advance, track count (no push/shift/new array)
+                const slot = state.positionHistory[state.positionHistoryHead];
+                slot.x = player.x;
+                slot.y = player.y;
+                state.positionHistoryHead = (state.positionHistoryHead + 1) % STUCK_HISTORY_LENGTH;
+                if (state.positionHistoryCount < STUCK_HISTORY_LENGTH) state.positionHistoryCount++;
 
                 // Only evaluate once we have a full history window
-                if (state.positionHistory.length === STUCK_HISTORY_LENGTH && state.escapeTicksLeft <= 0) {
-                    const oldest = state.positionHistory[0];
+                if (state.positionHistoryCount === STUCK_HISTORY_LENGTH && state.escapeTicksLeft <= 0) {
+                    // Oldest entry is at the current head (next write position overwrites oldest)
+                    const oldest = state.positionHistory[state.positionHistoryHead];
                     const dx = player.x - oldest.x;
                     const dy = player.y - oldest.y;
                     const netDisplacementSq = dx * dx + dy * dy;
@@ -247,7 +254,8 @@ export class BotManager {
                         // Bot is stuck — trigger an escape manoeuvre
                         state.escapeTicksLeft = STUCK_ESCAPE_TICKS;
                         state.escapeAngle = Math.random() * Math.PI * 2;
-                        state.positionHistory = []; // reset history so we don't re-trigger immediately
+                        state.positionHistoryHead = 0;
+                        state.positionHistoryCount = 0; // reset — no allocation
                     }
                 }
             }
@@ -309,7 +317,9 @@ export class BotManager {
             wanderTicksLeft: this.randomWanderTicks(),
             respawnCountdown: 0,
             nameIndex: this.botCounter,
-            positionHistory: [],
+            positionHistory: [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }],
+            positionHistoryHead: 0,
+            positionHistoryCount: 0,
             stuckSampleTimer: 0,
             escapeTicksLeft: 0,
             escapeAngle: 0,
@@ -967,17 +977,19 @@ export class BotManager {
     }
 
     private pickName(): string {
-        // Shuffle and try to find an unused name; fall back to appending a number
-        const shuffled = [...BOT_NAMES].sort(() => Math.random() - 0.5);
-        for (const name of shuffled) {
+        // Scan from a random start index to distribute names without shuffle+sort allocation
+        const len = BOT_NAMES.length;
+        const start = Math.floor(Math.random() * len);
+        for (let i = 0; i < len; i++) {
+            const name = BOT_NAMES[(start + i) % len];
             if (!this.usedNames.has(name)) {
                 this.usedNames.add(name);
                 return name;
             }
         }
         // All base names in use — append a counter
-        const base = BOT_NAMES[this.botCounter % BOT_NAMES.length];
-        const tagged = `${base}${Math.floor(this.botCounter / BOT_NAMES.length) + 2}`;
+        const base = BOT_NAMES[this.botCounter % len];
+        const tagged = `${base}${Math.floor(this.botCounter / len) + 2}`;
         this.usedNames.add(tagged);
         return tagged;
     }
