@@ -1,6 +1,6 @@
 import type { WorldObjectType } from './types.js';
 
-export const WORLD_SIZE = 1000;
+export const WORLD_SIZE = 1500;
 export const SAFE_ZONE_RADIUS = 60;
 export const WORLD_ZONE_COUNT = 8;
 export const ROAD_HALF_WIDTH = 8;

@@ -19,14 +19,45 @@ const TARGET_TOTAL_PLAYERS = 8;
 const BOT_RESPAWN_DELAY_TICKS_MIN = TICK_RATE * 3; // 3 seconds
 const BOT_RESPAWN_DELAY_TICKS_MAX = TICK_RATE * 5; // 5 seconds
 
+// Base VIEW_RANGE — actual range is scaled by personality and size tier
 const VIEW_RANGE     = 150; // units — bots can "see" within this distance
 const FLEE_RANGE     = 100; // units — flee from bigger players within this range
 const POWERUP_RANGE  = 100; // units — seek power-ups within this range
 const OBJ_RANGE_MULT = 3;   // multiplier on bot radius for object seeking
 
+// Size-tier overrides (applied on top of personality multipliers)
+/** Small bots (F0-F1, radius < 2.0): flee detection radius = N * own radius */
+const SMALL_FLEE_RADIUS_MULT  = 3.5; // detect threats from much farther away
+/** Medium bots (F2-F3): expanded view range multiplier */
+const MEDIUM_VIEW_RANGE_MULT  = 1.5;
+/** Medium bots: chase threshold — bot must be at least this many times larger than prey */
+const MEDIUM_CHASE_RATIO      = 1.11; // 1.11x = close to ABSORB_RATIO (1.1), very opportunistic
+/** Large bots (F4-F5, radius > 5.0): view range multiplier */
+const LARGE_VIEW_RANGE_MULT   = 2.5;
+/** Large bots: they will chase any player up to this fraction of their own radius */
+const LARGE_CHASE_RATIO       = 1.05;
+/** Large bots: gravity-center search range when no prey is visible */
+const LARGE_GRAVITY_RANGE     = 300;
+
 // How many ticks until a wandering bot picks a new target
 const WANDER_MIN_TICKS = TICK_RATE * 5;   //  5 seconds
 const WANDER_MAX_TICKS = TICK_RATE * 10;  // 10 seconds
+
+// ---- Jitter (human-like movement variation) ----
+/**
+ * Per-tick random angular noise applied to all movement headings.
+ * Small bots get more jitter (erratic fleeing), large bots get less (purposeful).
+ */
+const JITTER_SMALL  = 0.35; // ±~20 degrees
+const JITTER_MEDIUM = 0.20; // ±~11 degrees
+const JITTER_LARGE  = 0.10; // ±~6 degrees
+
+// ---- Edge avoidance ----
+/**
+ * When the bot is within this margin of the world boundary, it steers back toward
+ * the center to avoid getting stuck in corners.
+ */
+const EDGE_MARGIN = WORLD_SIZE * 0.07; // 70 units from edge
 
 // ---- Stuck detection ----
 /** How often (in ticks) we sample the bot's position for stuck detection. */
@@ -55,9 +86,9 @@ const BOT_NAMES = [
 
 // Personality presets — vary aggression, caution, and wander style
 interface BotPersonality {
-    /** Multiplier on VIEW_RANGE for hunting prey (0.7 = cautious, 1.3 = aggressive) */
+    /** Multiplier on VIEW_RANGE for hunting prey (0.7 = cautious, 1.5 = aggressive) */
     huntRangeMult: number;
-    /** Multiplier on FLEE_RANGE (1.5 = very cautious, 0.8 = daring) */
+    /** Multiplier on FLEE_RANGE (1.8 = very cautious, 0.7 = daring) */
     fleeRangeMult: number;
     /** Minimum size ratio over prey before chasing (1.3 = needs to be clearly bigger) */
     chaseRatioThreshold: number;
@@ -68,11 +99,16 @@ interface BotPersonality {
 }
 
 const PERSONALITIES: BotPersonality[] = [
-    { huntRangeMult: 1.3, fleeRangeMult: 0.8, chaseRatioThreshold: 1.25, prefersObjects: false, boostRate: 1.0 },  // Aggressive
-    { huntRangeMult: 1.0, fleeRangeMult: 1.2, chaseRatioThreshold: 1.35, prefersObjects: true,  boostRate: 0.6 },  // Balanced
-    { huntRangeMult: 0.7, fleeRangeMult: 1.5, chaseRatioThreshold: 1.5,  prefersObjects: true,  boostRate: 0.3 },  // Cautious/Grower
-    { huntRangeMult: 1.1, fleeRangeMult: 1.0, chaseRatioThreshold: 1.3,  prefersObjects: false, boostRate: 0.8 },  // Opportunistic
-    { huntRangeMult: 0.9, fleeRangeMult: 1.3, chaseRatioThreshold: 1.4,  prefersObjects: true,  boostRate: 0.5 },  // Cautious/Hunter
+    // Aggressive — hunts relentlessly, nearly fearless, boosts constantly
+    { huntRangeMult: 1.5, fleeRangeMult: 0.7,  chaseRatioThreshold: 1.20, prefersObjects: false, boostRate: 1.0  },
+    // Balanced — moderate hunter, moderate caution
+    { huntRangeMult: 1.0, fleeRangeMult: 1.2,  chaseRatioThreshold: 1.35, prefersObjects: true,  boostRate: 0.6  },
+    // Cautious/Grower — avoids fights, grows on objects, flees early
+    { huntRangeMult: 0.6, fleeRangeMult: 1.8,  chaseRatioThreshold: 1.55, prefersObjects: true,  boostRate: 0.25 },
+    // Opportunistic — punches above its weight when an easy kill is nearby
+    { huntRangeMult: 1.2, fleeRangeMult: 1.0,  chaseRatioThreshold: 1.25, prefersObjects: false, boostRate: 0.85 },
+    // Cautious/Hunter — hunts but retreats quickly when threatened
+    { huntRangeMult: 0.9, fleeRangeMult: 1.4,  chaseRatioThreshold: 1.40, prefersObjects: true,  boostRate: 0.5  },
 ];
 
 interface BotState {
@@ -295,6 +331,36 @@ export class BotManager {
     // AI decision making
     // ------------------------------------------------------------------ //
 
+    /**
+     * Returns a per-tick jitter angle offset to make bot movement look more human.
+     * Amplitude scales with the size tier: small bots are erratic, large are purposeful.
+     */
+    private getJitter(radius: number): number {
+        const amplitude = radius < 2.0 ? JITTER_SMALL
+            : radius < 5.0 ? JITTER_MEDIUM
+            : JITTER_LARGE;
+        return (Math.random() - 0.5) * amplitude;
+    }
+
+    /**
+     * If the bot is near the world boundary, returns a corrective angle pointing back
+     * toward the center-ish.  Returns null when the bot is safely away from all edges.
+     */
+    private getEdgeAvoidanceAngle(x: number, y: number): number | null {
+        const nearLeft   = x < EDGE_MARGIN;
+        const nearRight  = x > WORLD_SIZE - EDGE_MARGIN;
+        const nearTop    = y < EDGE_MARGIN;
+        const nearBottom = y > WORLD_SIZE - EDGE_MARGIN;
+
+        if (!nearLeft && !nearRight && !nearTop && !nearBottom) return null;
+
+        // Steer toward world center with a small random offset so bots don't all
+        // converge on the exact center when spawning at the same edge.
+        const cx = WORLD_SIZE / 2 + (Math.random() - 0.5) * 200;
+        const cy = WORLD_SIZE / 2 + (Math.random() - 0.5) * 200;
+        return Math.atan2(cy - y, cx - x);
+    }
+
     private computeInput(state: BotState, avgRealRadius: number): InputPayload {
         const { player } = state;
         const personality = this.getScaledPersonality(state.personality, avgRealRadius);
@@ -306,67 +372,209 @@ export class BotManager {
             return { angle: state.escapeAngle, active: true, boost: false };
         }
 
-        // ---- Priority 0.5: Water urgency — if standing in water, leave immediately ----
+        // ---- Priority 0.5: Edge avoidance (overrides most actions) ----
+        const edgeAngle = this.getEdgeAvoidanceAngle(x, y);
+        if (edgeAngle !== null) {
+            // Boost away from walls to unstick quickly
+            return { angle: edgeAngle, active: true, boost: player.stamina > 20 };
+        }
+
+        // ---- Priority 1: Water urgency — if standing in water, leave immediately ----
         const currentZone = this.world.getZoneAt(x, y);
         if (currentZone === 'water') {
-            // Find the nearest non-water point by sampling 8 cardinal + diagonal directions
-            // and picking the direction that most quickly escapes the current water zone.
             const escapeAngle = this.findEscapeFromZone(x, y, 'water');
             return { angle: escapeAngle, active: true, boost: player.stamina > 15 };
         }
 
-        // ---- Priority 1: Flee from bigger nearby players ----
-        const fleeRange = FLEE_RANGE * personality.fleeRangeMult;
+        // ========================================================
+        // SIZE-TIER BEHAVIOUR BRANCHES
+        // ========================================================
+
+        if (radius < 2.0) {
+            // ---- SMALL BOTS (F0-F1): survival is top priority ----
+            return this.computeSmallBotInput(state, personality, x, y, radius);
+        } else if (radius < 5.0) {
+            // ---- MEDIUM BOTS (F2-F3): active hunters ----
+            return this.computeMediumBotInput(state, personality, x, y, radius);
+        } else {
+            // ---- LARGE BOTS (F4-F5): apex predators ----
+            return this.computeLargeBotInput(state, personality, x, y, radius);
+        }
+    }
+
+    // ---- Small bot (F0-F1) logic ----
+    private computeSmallBotInput(
+        state: BotState, personality: BotPersonality,
+        x: number, y: number, radius: number,
+    ): InputPayload {
+        const player = state.player;
+
+        // Extended flee range: small bots detect threats from further away
+        const fleeRange = Math.max(
+            FLEE_RANGE * personality.fleeRangeMult,
+            radius * SMALL_FLEE_RADIUS_MULT,
+        );
+
         const fleeTarget = this.findFleeTarget(player, fleeRange);
         if (fleeTarget) {
-            // Move directly away from the threat, but apply terrain avoidance
+            // Move directly away from threat
             const rawAngle = Math.atan2(y - fleeTarget.y, x - fleeTarget.x);
-            const angle = this.applyTerrainAvoidance(x, y, rawAngle);
-            const boost = player.stamina > 20 && personality.boostRate >= 0.5;
+
+            // Optionally steer toward the nearest safe zone if one is close enough
+            const safeZoneAngle = this.findNearestSafeZoneAngle(x, y, fleeRange * 1.5);
+            let chosenAngle: number;
+            if (safeZoneAngle !== null) {
+                // Blend: 60% toward safe zone, 40% away from threat
+                const sx = Math.cos(safeZoneAngle) * 0.6 + Math.cos(rawAngle) * 0.4;
+                const sy = Math.sin(safeZoneAngle) * 0.6 + Math.sin(rawAngle) * 0.4;
+                chosenAngle = Math.atan2(sy, sx);
+            } else {
+                chosenAngle = rawAngle;
+            }
+
+            const angle = this.applyTerrainAvoidance(x, y, chosenAngle + this.getJitter(radius));
+            // Small bots always boost when fleeing and have stamina
+            const boost = player.stamina > 10;
             return { angle, active: true, boost };
         }
 
-        // ---- Priority 2: Chase smaller nearby players ----
-        if (!personality.prefersObjects) {
-            const huntRange = VIEW_RANGE * personality.huntRangeMult;
-            const prey = this.findPrey(player, huntRange, personality.chaseRatioThreshold);
-            if (prey) {
-                const rawAngle = Math.atan2(prey.y - y, prey.x - x);
-                const angle = this.applyTerrainAvoidance(x, y, rawAngle);
-                const boost = player.stamina > 30 && personality.boostRate >= 0.7;
-                return { angle, active: true, boost };
-            }
-        }
-
-        // ---- Priority 3: Seek nearby power-ups ----
+        // No immediate threat: seek power-ups first (growth helps survival)
         const powerUp = this.findNearestPowerUp(x, y, POWERUP_RANGE);
         if (powerUp) {
             const rawAngle = Math.atan2(powerUp.y - y, powerUp.x - x);
-            const angle = this.applyTerrainAvoidance(x, y, rawAngle);
+            const angle = this.applyTerrainAvoidance(x, y, rawAngle + this.getJitter(radius));
             return { angle, active: true, boost: false };
         }
 
-        // ---- Priority 4: Seek nearby destroyable objects ----
+        // Seek safe zone passively if nearby (small bots like safe zones)
+        const safeZoneAngle = this.findNearestSafeZoneAngle(x, y, fleeRange);
+        if (safeZoneAngle !== null) {
+            const angle = this.applyTerrainAvoidance(x, y, safeZoneAngle + this.getJitter(radius));
+            return { angle, active: true, boost: false };
+        }
+
+        // Seek objects to grow
         const objTarget = this.findNearestDestroyableObject(x, y, radius * OBJ_RANGE_MULT);
         if (objTarget) {
             const rawAngle = Math.atan2(objTarget.y - y, objTarget.x - x);
-            const angle = this.applyTerrainAvoidance(x, y, rawAngle);
+            const angle = this.applyTerrainAvoidance(x, y, rawAngle + this.getJitter(radius));
             return { angle, active: true, boost: false };
         }
 
-        // ---- For object-preferring bots, hunt players AFTER objects ----
-        if (personality.prefersObjects) {
-            const huntRange = VIEW_RANGE * personality.huntRangeMult;
-            const prey = this.findPrey(player, huntRange, personality.chaseRatioThreshold);
+        return this.wander(state);
+    }
+
+    // ---- Medium bot (F2-F3) logic ----
+    private computeMediumBotInput(
+        state: BotState, personality: BotPersonality,
+        x: number, y: number, radius: number,
+    ): InputPayload {
+        const player = state.player;
+
+        // Still flee from significantly larger players
+        const fleeRange = FLEE_RANGE * personality.fleeRangeMult;
+        const fleeTarget = this.findFleeTarget(player, fleeRange);
+        if (fleeTarget) {
+            const rawAngle = Math.atan2(y - fleeTarget.y, x - fleeTarget.x);
+            const angle = this.applyTerrainAvoidance(x, y, rawAngle + this.getJitter(radius));
+            const boost = player.stamina > 20 && personality.boostRate >= 0.4;
+            return { angle, active: true, boost };
+        }
+
+        // Actively hunt players within expanded range
+        const huntRange = VIEW_RANGE * personality.huntRangeMult * MEDIUM_VIEW_RANGE_MULT;
+        // Use the tighter chase ratio: can chase players at up to 0.9x own radius
+        const effectiveChaseRatio = Math.min(personality.chaseRatioThreshold, MEDIUM_CHASE_RATIO);
+
+        if (!personality.prefersObjects) {
+            const prey = this.findBestPrey(player, huntRange, effectiveChaseRatio);
             if (prey) {
                 const rawAngle = Math.atan2(prey.y - y, prey.x - x);
-                const angle = this.applyTerrainAvoidance(x, y, rawAngle);
-                const boost = player.stamina > 30 && personality.boostRate >= 0.7;
+                const angle = this.applyTerrainAvoidance(x, y, rawAngle + this.getJitter(radius));
+                // Boost when prey is close (within 60 units) and stamina allows
+                const distSq = (prey.x - x) * (prey.x - x) + (prey.y - y) * (prey.y - y);
+                const boost = player.stamina > 30 && personality.boostRate >= 0.5 && distSq < 60 * 60;
                 return { angle, active: true, boost };
             }
         }
 
-        // ---- Priority 5: Wander ----
+        // Seek power-ups
+        const powerUp = this.findNearestPowerUp(x, y, POWERUP_RANGE);
+        if (powerUp) {
+            const rawAngle = Math.atan2(powerUp.y - y, powerUp.x - x);
+            const angle = this.applyTerrainAvoidance(x, y, rawAngle + this.getJitter(radius));
+            return { angle, active: true, boost: false };
+        }
+
+        // Seek objects
+        const objTarget = this.findNearestDestroyableObject(x, y, radius * OBJ_RANGE_MULT);
+        if (objTarget) {
+            const rawAngle = Math.atan2(objTarget.y - y, objTarget.x - x);
+            const angle = this.applyTerrainAvoidance(x, y, rawAngle + this.getJitter(radius));
+            return { angle, active: true, boost: false };
+        }
+
+        // Object-preferring bots hunt after objects
+        if (personality.prefersObjects) {
+            const prey = this.findBestPrey(player, huntRange, effectiveChaseRatio);
+            if (prey) {
+                const rawAngle = Math.atan2(prey.y - y, prey.x - x);
+                const angle = this.applyTerrainAvoidance(x, y, rawAngle + this.getJitter(radius));
+                const boost = player.stamina > 30 && personality.boostRate >= 0.5;
+                return { angle, active: true, boost };
+            }
+        }
+
+        return this.wander(state);
+    }
+
+    // ---- Large bot (F4-F5) logic ----
+    private computeLargeBotInput(
+        state: BotState, personality: BotPersonality,
+        x: number, y: number, radius: number,
+    ): InputPayload {
+        const player = state.player;
+
+        // Large bots only flee from players shielded AND larger (not worth the risk)
+        // For unshielded opponents, they fight rather than flee even if slightly smaller
+        const fleeRange = FLEE_RANGE * personality.fleeRangeMult * 0.5; // reduced fear
+        const fleeTarget = this.findFleeTargetShieldedOnly(player, fleeRange);
+        if (fleeTarget) {
+            const rawAngle = Math.atan2(y - fleeTarget.y, x - fleeTarget.x);
+            const angle = this.applyTerrainAvoidance(x, y, rawAngle + this.getJitter(radius));
+            return { angle, active: true, boost: player.stamina > 15 };
+        }
+
+        // Very wide hunt range with generous chase ratio
+        const huntRange = VIEW_RANGE * personality.huntRangeMult * LARGE_VIEW_RANGE_MULT;
+        const prey = this.findBestPrey(player, huntRange, LARGE_CHASE_RATIO);
+        if (prey) {
+            const rawAngle = Math.atan2(prey.y - y, prey.x - x);
+            const angle = this.applyTerrainAvoidance(x, y, rawAngle + this.getJitter(radius));
+            // Large bots boost aggressively when chasing
+            const boost = player.stamina > 20 && personality.boostRate >= 0.3;
+            return { angle, active: true, boost };
+        }
+
+        // No prey in range: use center-of-gravity targeting — move toward the
+        // densest cluster of players/objects to maximise encounter rate.
+        const gravityTarget = this.findGravityCenter(x, y, LARGE_GRAVITY_RANGE);
+        if (gravityTarget) {
+            const rawAngle = Math.atan2(gravityTarget.y - y, gravityTarget.x - x);
+            const angle = this.applyTerrainAvoidance(x, y, rawAngle + this.getJitter(radius));
+            // Boost toward the action when stamina is plentiful
+            const boost = player.stamina > 40 && personality.boostRate >= 0.6;
+            return { angle, active: true, boost };
+        }
+
+        // Fallback: seek power-ups then objects then wander
+        const powerUp = this.findNearestPowerUp(x, y, POWERUP_RANGE * 1.5);
+        if (powerUp) {
+            const rawAngle = Math.atan2(powerUp.y - y, powerUp.x - x);
+            const angle = this.applyTerrainAvoidance(x, y, rawAngle + this.getJitter(radius));
+            return { angle, active: true, boost: false };
+        }
+
         return this.wander(state);
     }
 
@@ -438,6 +646,7 @@ export class BotManager {
     /**
      * Find the nearest player (real or bot) that is bigger than us and within range.
      * Returns the position to flee from (the threat's position).
+     * Skips players that are shielded OR spawn-protected (same logic: untouchable).
      */
     private findFleeTarget(
         self: Player,
@@ -445,6 +654,7 @@ export class BotManager {
     ): { x: number; y: number } | null {
         let closest: { x: number; y: number } | null = null;
         let closestDistSq = range * range;
+        const now = Date.now();
 
         for (const other of this.game.players.values()) {
             if (other.id === self.id || !other.alive) continue;
@@ -464,7 +674,74 @@ export class BotManager {
     }
 
     /**
-     * Find a nearby smaller player that we can chase and absorb.
+     * Variant of findFleeTarget used by large bots: only flee from players that are
+     * BOTH larger (can absorb us) AND currently shielded — normal opponents are not
+     * worth avoiding for a predator-class tornado.
+     */
+    private findFleeTargetShieldedOnly(
+        self: Player,
+        range: number,
+    ): { x: number; y: number } | null {
+        let closest: { x: number; y: number } | null = null;
+        let closestDistSq = range * range;
+
+        for (const other of this.game.players.values()) {
+            if (other.id === self.id || !other.alive) continue;
+            if (!other.canAbsorb(self)) continue;
+            // Large bots only retreat from shielded threats
+            if (!other.hasEffect('shield') && !other.isSpawnProtected()) continue;
+
+            const dx = other.x - self.x;
+            const dy = other.y - self.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < closestDistSq) {
+                closestDistSq = distSq;
+                closest = { x: other.x, y: other.y };
+            }
+        }
+
+        return closest;
+    }
+
+    /**
+     * Find the best prey to chase: the highest-scoring player we can absorb within range.
+     * Skips players that have a shield active (shielded players cannot be absorbed).
+     * Among candidates, prefers the one with the highest score (more reward).
+     */
+    private findBestPrey(
+        self: Player,
+        range: number,
+        ratioThreshold: number,
+    ): { x: number; y: number } | null {
+        let bestTarget: { x: number; y: number } | null = null;
+        let bestScore = -1;
+        const rangeSq = range * range;
+
+        for (const other of this.game.players.values()) {
+            if (other.id === self.id || !other.alive) continue;
+            // Must be small enough for us to absorb
+            if (self.radius < other.radius * ratioThreshold) continue;
+            // Avoid shielded targets — we can't absorb them and pursuing is wasteful
+            if (other.hasEffect('shield') || other.isSpawnProtected()) continue;
+
+            const dx = other.x - self.x;
+            const dy = other.y - self.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq > rangeSq) continue;
+
+            // Prefer higher-score targets (more rewarding kill)
+            if (other.score > bestScore) {
+                bestScore = other.score;
+                bestTarget = { x: other.x, y: other.y };
+            }
+        }
+
+        return bestTarget;
+    }
+
+    /**
+     * Legacy findPrey kept for internal use compatibility (used nowhere directly now,
+     * but preserved so future callers have a simple nearest-prey option).
      */
     private findPrey(
         self: Player,
@@ -476,8 +753,9 @@ export class BotManager {
 
         for (const other of this.game.players.values()) {
             if (other.id === self.id || !other.alive) continue;
-            // Must be significantly smaller (not just canAbsorb threshold)
             if (self.radius < other.radius * ratioThreshold) continue;
+            // Skip shielded/protected players
+            if (other.hasEffect('shield') || other.isSpawnProtected()) continue;
 
             const dx = other.x - self.x;
             const dy = other.y - self.y;
@@ -567,6 +845,65 @@ export class BotManager {
     }
 
     /**
+     * Find the angle toward the nearest safe zone within `range`.
+     * Returns null if no safe zone is within range.
+     */
+    private findNearestSafeZoneAngle(x: number, y: number, range: number): number | null {
+        let closestDistSq = range * range;
+        let bestAngle: number | null = null;
+
+        for (const sz of this.world.safeZones) {
+            const dx = sz.x - x;
+            const dy = sz.y - y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < closestDistSq) {
+                closestDistSq = distSq;
+                bestAngle = Math.atan2(dy, dx);
+            }
+        }
+
+        return bestAngle;
+    }
+
+    /**
+     * Compute the "center of gravity" of all alive players and active power-ups within
+     * `range`.  Used by large bots to navigate toward the most populated area when
+     * no direct prey is visible.  Returns null if no relevant entities are found.
+     */
+    private findGravityCenter(x: number, y: number, range: number): { x: number; y: number } | null {
+        let sumX = 0;
+        let sumY = 0;
+        let count = 0;
+        const rangeSq = range * range;
+
+        for (const other of this.game.players.values()) {
+            if (!other.alive) continue;
+            const dx = other.x - x;
+            const dy = other.y - y;
+            if (dx * dx + dy * dy < rangeSq) {
+                sumX += other.x;
+                sumY += other.y;
+                count++;
+            }
+        }
+
+        // Also weight toward active power-ups
+        for (const pu of this.world.powerUps) {
+            if (!pu.active) continue;
+            const dx = pu.x - x;
+            const dy = pu.y - y;
+            if (dx * dx + dy * dy < rangeSq) {
+                sumX += pu.x;
+                sumY += pu.y;
+                count++;
+            }
+        }
+
+        if (count === 0) return null;
+        return { x: sumX / count, y: sumY / count };
+    }
+
+    /**
      * Wandering behaviour: move toward current target; pick a new one when close or timer expires.
      * Adds slight noise to direction to avoid perfectly straight-line paths.
      */
@@ -584,7 +921,7 @@ export class BotManager {
             state.wanderTicksLeft = this.randomWanderTicks();
         }
 
-        // Add small random angular noise each tick so bots don't travel in perfectly straight lines
+        // Add random angular noise each tick so bots don't travel in perfectly straight lines
         const baseAngle = Math.atan2(dy, dx);
         const noise = (Math.random() - 0.5) * 0.3; // ±~17 degrees
         const angle = baseAngle + noise;

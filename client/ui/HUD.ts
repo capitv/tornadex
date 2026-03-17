@@ -62,6 +62,12 @@ export class HUD {
     private pingDot: HTMLElement;
     private pingValue: HTMLElement;
 
+    // ---- HUD throttle timestamps (Task 6) ----
+    private lastLeaderboardUpdate: number = 0;
+    private lastScoreUpdate: number = 0;
+    private lastStaminaUpdate: number = 0;
+    private lastMinimapUpdate: number = 0;
+
     // Stamina cooldown state
     private staminaCooldownEl: HTMLElement;
     private staminaCooldownTimer: ReturnType<typeof setTimeout> | null = null;
@@ -117,10 +123,20 @@ export class HUD {
         this.supercellBanner.id = 'supercell-banner';
         this.supercellBanner.className = 'supercell-banner';
         this.supercellBanner.innerHTML = `
-            <div class="supercell-title">⚠️ SUPERCELL WARNING ⚠️</div>
-            <div class="supercell-sub">A massive storm is forming at the center!<br>2x Growth & Infinite Stamina inside!</div>
+            <div class="supercell-title">⚠️ SUPERCELL ACTIVE ⚠️</div>
+            <div class="supercell-sub">A massive storm is raging!<br>2x Growth & Infinite Stamina inside!</div>
         `;
         document.body.appendChild(this.supercellBanner);
+
+        // Supercell warning banner (10s before activation)
+        this.supercellWarningBanner = document.createElement('div');
+        this.supercellWarningBanner.id = 'supercell-warning-banner';
+        this.supercellWarningBanner.className = 'supercell-banner supercell-warning';
+        this.supercellWarningBanner.innerHTML = `
+            <div class="supercell-title" style="color: #ffa500;">⚠ SUPERCELL INCOMING ⚠</div>
+            <div class="supercell-sub" style="color: #ffcc00;">A massive storm is approaching!<br>Prepare yourself!</div>
+        `;
+        document.body.appendChild(this.supercellWarningBanner);
 
         // Max size indicator near the growth bar
         this.maxSizeEl = document.createElement('div');
@@ -134,9 +150,12 @@ export class HUD {
         this.worldSize = size;
     }
 
-    // ---- Score (animated rolling counter) ----
+    // ---- Score (animated rolling counter, throttled to ~30fps) ----
     updateScore(score: number): void {
         if (score === this.currentScore) return;
+        const now = Date.now();
+        if (now - this.lastScoreUpdate < 33) return; // ~30fps throttle
+        this.lastScoreUpdate = now;
         const prevScore = this.currentScore;
         this.currentScore = score;
 
@@ -215,8 +234,11 @@ export class HUD {
         }
     }
 
-    // ---- Stamina ----
+    // ---- Stamina (throttled to ~30fps) ----
     updateStamina(stamina: number, isBoosting: boolean): void {
+        const now = Date.now();
+        if (now - this.lastStaminaUpdate < 33) return; // ~30fps throttle
+        this.lastStaminaUpdate = now;
         this.staminaFill.style.width = `${stamina}%`;
 
         // Warning state when below 25 %
@@ -291,8 +313,11 @@ export class HUD {
 
     // Debug overlay is handled entirely by main.ts (F3 key)
 
-    // ---- Leaderboard ----
+    // ---- Leaderboard (throttled to ~5x/sec) ----
     updateLeaderboard(entries: LeaderboardEntry[], localName: string): void {
+        const now = Date.now();
+        if (now - this.lastLeaderboardUpdate < 200) return; // 5x/sec throttle
+        this.lastLeaderboardUpdate = now;
         let html = '';
         for (let i = 0; i < entries.length; i++) {
             const entry = entries[i];
@@ -309,8 +334,11 @@ export class HUD {
         this.leaderboardList.innerHTML = html;
     }
 
-    // ---- Minimap ----
+    // ---- Minimap (throttled to ~15fps) ----
     updateMinimap(players: PlayerState[], localId: string): void {
+        const now = Date.now();
+        if (now - this.lastMinimapUpdate < 67) return; // ~15fps throttle
+        this.lastMinimapUpdate = now;
         const ctx   = this.minimapCtx;
         const w     = this.minimapCanvas.width;
         const h     = this.minimapCanvas.height;
@@ -420,21 +448,40 @@ export class HUD {
     // ---- Supercell Event ----
     private currentSupercellState: import('../../shared/types.js').SupercellState | null = null;
     private supercellBanner: HTMLElement;
+    private supercellWarningBanner: HTMLElement;
     private supercellBannerTimer: ReturnType<typeof setTimeout> | null = null;
 
     updateSupercell(state: import('../../shared/types.js').SupercellState | undefined): void {
         if (!state) return;
 
-        // Detect transition from inactive -> active
+        // Detect transition from inactive -> active: show active banner, hide warning
         if (!this.currentSupercellState?.active && state.active) {
-            // Show banner
+            // Hide warning banner
+            this.supercellWarningBanner.classList.remove('active');
+            // Show active banner
             this.supercellBanner.classList.add('active');
-            
+
             // Auto hide after 5 seconds
             if (this.supercellBannerTimer !== null) clearTimeout(this.supercellBannerTimer);
             this.supercellBannerTimer = setTimeout(() => {
                 this.supercellBanner.classList.remove('active');
             }, 6000);
+        }
+
+        // Detect warning state: show pulsing warning banner
+        if (state.warning && !this.currentSupercellState?.warning) {
+            this.supercellWarningBanner.classList.add('active');
+        } else if (!state.warning && this.currentSupercellState?.warning) {
+            this.supercellWarningBanner.classList.remove('active');
+        }
+
+        // When supercell deactivates, hide active banner
+        if (this.currentSupercellState?.active && !state.active) {
+            this.supercellBanner.classList.remove('active');
+            if (this.supercellBannerTimer !== null) {
+                clearTimeout(this.supercellBannerTimer);
+                this.supercellBannerTimer = null;
+            }
         }
 
         // Cache state for minimap rendering

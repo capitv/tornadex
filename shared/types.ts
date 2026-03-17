@@ -76,6 +76,7 @@ export interface SupercellState {
     y: number;
     radius: number;
     timeRemaining: number; // ticks remaining for either the active duration or the cooldown
+    warning?: boolean; // true when supercell is about to activate (10 seconds warning)
 }
 
 export interface KillEvent {

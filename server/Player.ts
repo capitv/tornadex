@@ -294,16 +294,28 @@ export class Player {
 
     grow(points: number, radiusGrowth: number): void {
         this.score += points;
-        // Early-game boost keeps tree pickups feeling responsive, while
-        // larger tornados still taper off to avoid runaway snowballing.
+        // Growth multiplier by radius band — calibrated so each Fujita stage
+        // (F0-F2) is meaningfully long rather than a blink-and-miss-it transition.
+        //
+        // Old curve gave F0-F1 a 2.0× boost, causing players to rocket through
+        // early stages. New curve keeps small tornados at 1.2× (still responsive
+        // but without the runaway early snowball):
+        //
+        //  radius < 1.5  (F0-F1) : 1.2×  — was 2.0×, slowed down
+        //  1.5 – 2.5     (F1-F2) : 1.0×  — was 1.55×, neutral growth
+        //  2.5 – 4.0     (F2-F3) : 0.85× — slight early taper
+        //  4.0 – 6.0     (F3 core): 0.7× — noticeable taper
+        //  > 6.0         (F4+)   : 2.4/radius — existing formula preserved
         let growthMult = 1.0;
         if (this.radius < 1.5) {
-            growthMult = 2.0;
+            growthMult = 1.2;
         } else if (this.radius < 2.5) {
-            growthMult = 1.55;
+            growthMult = 1.0;
         } else if (this.radius < 4.0) {
-            growthMult = 1.15;
-        } else if (this.radius > 5.0) {
+            growthMult = 0.85;
+        } else if (this.radius < 6.0) {
+            growthMult = 0.7;
+        } else {
             growthMult = 2.4 / this.radius;
         }
         

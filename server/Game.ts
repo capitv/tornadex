@@ -18,19 +18,21 @@ import {
     SAFE_ZONE_MAX_RADIUS,
     POWERUP_COLLECT_RADIUS, GROWTH_BOOST_MULTIPLIER,
     VEHICLE_POINTS, VEHICLE_GROWTH, VEHICLE_SIZE, VEHICLE_COLLISION_RADIUS,
-    SUPERCELL_DURATION_TICKS, SUPERCELL_COOLDOWN_TICKS, SUPERCELL_RADIUS, WORLD_SIZE
+    SUPERCELL_DURATION_SCHEDULE_TICKS, SUPERCELL_COOLDOWN_SCHEDULE_TICKS, SUPERCELL_RADIUS, WORLD_SIZE
 } from './constants.js';
 
 const logger = new Logger('Game');
 
 // Distance thresholds for LOD (Level of Detail) network updates
-const NEAR_DISTANCE = 200;   // Full detail every tick
-const MED_DISTANCE  = 500;   // Full detail every 2 ticks
-// > MED_DISTANCE             // Position only every 4 ticks
+const NEAR_DISTANCE     = 200;   // Full detail every tick
+const MED_DISTANCE      = 500;   // Full detail every 2 ticks
+const FAR_DISTANCE      = 900;   // Position only every 4 ticks
+// > FAR_DISTANCE                // Position only every 8 ticks (ultra-far)
 
 // How many ticks to skip between updates for each band
-const MED_TICK_INTERVAL  = 2;
-const FAR_TICK_INTERVAL  = 4;
+const MED_TICK_INTERVAL       = 2;
+const FAR_TICK_INTERVAL       = 4;
+const ULTRA_FAR_TICK_INTERVAL = 8;
 
 /** Entry stored in the disconnected-player grace-period map. */
 interface DisconnectedEntry {
@@ -67,8 +69,10 @@ export class Game {
         x: WORLD_SIZE / 2,
         y: WORLD_SIZE / 2,
         radius: SUPERCELL_RADIUS,
-        timeRemaining: SUPERCELL_COOLDOWN_TICKS
+        timeRemaining: SUPERCELL_COOLDOWN_SCHEDULE_TICKS[0]
     };
+    private supercellCooldownIdx: number = 0;
+    private supercellDurationIdx: number = 0;
     private previousSupercellJson: Map<string, string> = new Map();
     private _cachedSupercellJson: string = '';
 
@@ -116,6 +120,8 @@ export class Game {
 
     // ---- Class-level safeZoneCache (cleared each tick instead of reallocated) ----
     private safeZoneCache: Map<string, boolean> = new Map();
+    // ---- Reusable Set for P×P collision pair dedup (avoids allocation each tick) ----
+    private _checkedPairsSet: Set<string> = new Set();
 
     // ---- Cached tick timestamp (Date.now() captured once per tick) ----
     private tickTimestamp: number = 0;
@@ -418,16 +424,29 @@ export class Game {
 
         // Update Supercell global event
         this.supercell.timeRemaining--;
+
+        // Warning: 10 seconds before supercell activates
+        if (!this.supercell.active && this.supercell.timeRemaining <= TICK_RATE * 10 && this.supercell.timeRemaining > 0) {
+            this.supercell.warning = true;
+        }
+
         if (this.supercell.timeRemaining <= 0) {
             if (this.supercell.active) {
-                // Event over -> back to cooldown
+                // Event over -> advance duration index (clamp to last), back to cooldown
                 this.supercell.active = false;
-                this.supercell.timeRemaining = SUPERCELL_COOLDOWN_TICKS;
+                this.supercell.warning = false;
+                this.supercellDurationIdx = Math.min(this.supercellDurationIdx + 1, SUPERCELL_DURATION_SCHEDULE_TICKS.length - 1);
+                // Advance cooldown index (clamp to last)
+                this.supercellCooldownIdx = Math.min(this.supercellCooldownIdx + 1, SUPERCELL_COOLDOWN_SCHEDULE_TICKS.length - 1);
+                this.supercell.timeRemaining = SUPERCELL_COOLDOWN_SCHEDULE_TICKS[this.supercellCooldownIdx];
                 logger.info('Supercell event ended. Cooldown started.');
             } else {
-                // Cooldown over -> event starts
+                // Cooldown over -> event starts — randomize position within safe area
                 this.supercell.active = true;
-                this.supercell.timeRemaining = SUPERCELL_DURATION_TICKS;
+                this.supercell.warning = false;
+                this.supercell.x = WORLD_SIZE * 0.25 + Math.random() * WORLD_SIZE * 0.5;
+                this.supercell.y = WORLD_SIZE * 0.25 + Math.random() * WORLD_SIZE * 0.5;
+                this.supercell.timeRemaining = SUPERCELL_DURATION_SCHEDULE_TICKS[this.supercellDurationIdx];
                 logger.info('Supercell event started!');
             }
         }
@@ -537,7 +556,7 @@ export class Game {
             }
         }
 
-        // Check player vs player collisions
+        // Check player vs player collisions (optimized via SpatialGrid)
         this._alivePlayers.length = 0;
         for (const p of this.players.values()) {
             if (p.alive) this._alivePlayers.push(p);
@@ -551,10 +570,26 @@ export class Game {
             safeZoneCache.set(p.id, p.radius < SAFE_ZONE_MAX_RADIUS && this.world.isInSafeZone(p.x, p.y));
         }
 
+        // Use SpatialGrid to find nearby player pairs instead of O(n^2).
+        // Track checked pairs to avoid processing A-B and B-A.
+        const checkedPairs = this._checkedPairsSet;
+        checkedPairs.clear();
         for (let i = 0; i < playerArray.length; i++) {
-            for (let j = i + 1; j < playerArray.length; j++) {
-                const a = playerArray[i];
-                const b = playerArray[j];
+            const a = playerArray[i];
+            // Query radius: max plausible collision distance for this player
+            const queryRadius = a.radius * 3 + 10;
+            const nearby = this.grid.query(a.x, a.y, queryRadius);
+
+            for (const entity of nearby) {
+                // Only check player entities (string IDs), skip world objects (numeric IDs)
+                if (typeof entity.id !== 'string') continue;
+                const b = this.players.get(entity.id as string);
+                if (!b || !b.alive || b === a) continue;
+
+                // Build a canonical pair key to avoid checking both A-B and B-A
+                const pairKey = a.id < b.id ? a.id + '|' + b.id : b.id + '|' + a.id;
+                if (checkedPairs.has(pairKey)) continue;
+                checkedPairs.add(pairKey);
 
                 // ---- Swept collision: find minimum distance during this tick ----
                 // Two moving points: A went from prevA→A, B went from prevB→B.
@@ -663,7 +698,7 @@ export class Game {
                     }
                 }
             }
-        }
+        }  // end SpatialGrid P×P collision
 
         // ---- NPC Vehicle collision with tornados ----
         // Check every alive player against every alive vehicle.
@@ -847,7 +882,8 @@ export class Game {
      *
      *  < NEAR_DISTANCE  (200):  full detail, every tick
      *  < MED_DISTANCE   (500):  full detail, every 2 ticks
-     *  >= MED_DISTANCE  (500+): position only, every 4 ticks
+     *  < FAR_DISTANCE   (900):  position only, every 4 ticks
+     *  >= FAR_DISTANCE  (900+): position only, every 8 ticks
      *
      * The viewer always receives their own full state every tick.
      */
@@ -860,8 +896,9 @@ export class Game {
         const result: PlayerState[] = [];
 
         // Use squared distance comparisons to avoid Math.sqrt per player
-        const nearDistSq = NEAR_DISTANCE * NEAR_DISTANCE;
-        const medDistSq  = MED_DISTANCE  * MED_DISTANCE;
+        const nearDistSq    = NEAR_DISTANCE * NEAR_DISTANCE;
+        const medDistSq     = MED_DISTANCE  * MED_DISTANCE;
+        const farDistSq     = FAR_DISTANCE  * FAR_DISTANCE;
 
         for (const state of allStates) {
             // Always include the viewer themselves at full detail
@@ -882,9 +919,14 @@ export class Game {
                 if (counter % MED_TICK_INTERVAL === 0) {
                     result.push(state);
                 }
-            } else {
+            } else if (distSq < farDistSq) {
                 // Far: position-only every FAR_TICK_INTERVAL ticks
                 if (counter % FAR_TICK_INTERVAL === 0) {
+                    result.push(this.toPositionOnlyState(state));
+                }
+            } else {
+                // Ultra-far: position-only every ULTRA_FAR_TICK_INTERVAL ticks
+                if (counter % ULTRA_FAR_TICK_INTERVAL === 0) {
                     result.push(this.toPositionOnlyState(state));
                 }
             }

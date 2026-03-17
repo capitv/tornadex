@@ -1292,13 +1292,14 @@ function animate(time: number): void {
         // Uses tiered lerp rates based on error magnitude:
         //   - Small  (< 1 unit):  very gentle (0.003/ms) — prevents micro-jitter
         //   - Medium (1–5 units): moderate    (0.012/ms) — smooth convergence
-        //   - Large  (> 5 units): aggressive  (0.04/ms)  — fast catch-up
-        //   - Huge   (> 10 units): snap immediately
+        //   - Large  (5–15 units): aggressive (0.04/ms)  — fast catch-up
+        //   - Very large (15–50 units): very aggressive (0.08/ms)
+        //   - Huge   (> 50 units): snap immediately
         const errX = predictedLocal.x - displayPos.x;
         const errY = predictedLocal.y - displayPos.y;
         const errDistSq = errX * errX + errY * errY;
-        if (errDistSq > 100) {
-            // Very large error (>10 units): snap immediately
+        if (errDistSq > 2500) {
+            // Very large error (>50 units): snap immediately
             displayPos.x = predictedLocal.x;
             displayPos.y = predictedLocal.y;
         } else if (errDistSq > 0.0001) {
@@ -1310,9 +1311,12 @@ function animate(time: number): void {
             } else if (errDistSq < 25) {
                 // 1–5 units: moderate correction
                 rate = 0.012;
-            } else {
-                // 5–10 units: aggressive correction
+            } else if (errDistSq < 225) {
+                // 5–15 units: aggressive correction
                 rate = 0.04;
+            } else {
+                // 15–50 units: very aggressive correction
+                rate = 0.08;
             }
             const corrFactor = 1 - Math.exp(-dt * rate);
             displayPos.x += errX * corrFactor;

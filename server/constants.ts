@@ -17,10 +17,11 @@ export const PLAYER_MIN_RADIUS = 0.8;           // Starting tornado radius
 export const PLAYER_MAX_RADIUS = 25;            // Maximum tornado radius
 export const PLAYER_SPAWN_RADIUS = 0.8;
 
-// Growth amounts per absorbed object — halved to slow F0→F5 progression.
+// Growth amounts per absorbed object.
+// Tree reduced 0.0028→0.0018 to slow F0→F3 tree-farming progression.
 export const OBJECT_GROWTH: Record<WorldObjectType, number> = {
     'animal':       0.0012,
-    'tree':         0.0028,
+    'tree':         0.0018, // was 0.0028 — slower early farming so F0-F2 stages last longer
     'car':          0.006,
     'barn':         0.016,
     'trailer_park': 0.02,
@@ -30,8 +31,9 @@ export const OBJECT_GROWTH: Record<WorldObjectType, number> = {
 // Tornado absorption: attacker must be X times bigger
 export const ABSORB_RATIO = 1.1;
 
-// Decay when idle (per tick)
-export const IDLE_DECAY_RATE = 0.001;
+// Decay when idle (per tick).
+// IDLE_DECAY_RATE raised 0.001→0.0012 to add a slightly stronger penalty for standing still.
+export const IDLE_DECAY_RATE = 0.0012;
 export const IDLE_SCORE_DECAY = 0.5;
 
 // Mountain zone penalty (per tick)
@@ -103,7 +105,20 @@ export const SPAWN_PROTECTION_MS = 1500;
 export const SAFE_ZONE_MAX_RADIUS = 1.5;
 
 // ---- Supercell Global Event ----
-export const SUPERCELL_DURATION_TICKS = TICK_RATE * 60; // 60 seconds
-export const SUPERCELL_COOLDOWN_TICKS = TICK_RATE * 45; // 45 seconds
+// Schedule: starts fast and short, then becomes rarer and longer
+// Cooldowns: 5s, 60s (1m), 120s (2m), 180s (3m, repeats)
+export const SUPERCELL_COOLDOWN_SCHEDULE_TICKS = [
+    TICK_RATE * 5,
+    TICK_RATE * 60,
+    TICK_RATE * 120,
+    TICK_RATE * 180,
+];
+
+// Durations: 5s first, then 10s (repeats)
+export const SUPERCELL_DURATION_SCHEDULE_TICKS = [
+    TICK_RATE * 5,
+    TICK_RATE * 10,
+];
+
 export const SUPERCELL_RADIUS = 150; // Concentrated zone in the center
 export const SUPERCELL_GROWTH_MULT = 2.0;
