@@ -1519,6 +1519,7 @@ function animate(time: number): void {
 
             // ---- Split ability: satellite tornado mesh lifecycle ----
             const sat = state.satellite;
+            const splitReady = !sat && state.radius >= 5.5; // F5 threshold
             if (sat) {
                 let satMesh = satelliteMeshes.get(id);
                 if (!satMesh) {
@@ -1531,17 +1532,18 @@ function animate(time: number): void {
                 satMesh.setRadius(sat.radius);
                 satMesh.setPosition(sat.x, sat.y);
                 satMesh.update(dt, state.rotation + 2.5); // slightly different spin
-                // Split timer HUD (only for local player)
-                hudManager.updateSplit(sat.ticksLeft);
+                hudManager.updateSplit(sat.ticksLeft, false);
+                input.setSplitAvailable(false);
             } else {
-                // Satellite gone — dispose mesh and hide timer
+                // Satellite gone — dispose mesh
                 const satMesh = satelliteMeshes.get(id);
                 if (satMesh) {
                     sceneManager.scene.remove(satMesh.group);
                     satMesh.dispose();
                     satelliteMeshes.delete(id);
                 }
-                hudManager.updateSplit(null);
+                hudManager.updateSplit(null, splitReady);
+                input.setSplitAvailable(splitReady);
             }
         }
     }

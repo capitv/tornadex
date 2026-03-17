@@ -554,23 +554,34 @@ export class HUD {
         }
     }
 
-    /** Show or hide the split ability countdown timer. ticksLeft=null hides it. */
-    updateSplit(ticksLeft: number | null): void {
-        if (ticksLeft === null || ticksLeft <= 0) {
-            this.splitTimerEl.style.display = 'none';
-            return;
-        }
-        const seconds = Math.ceil(ticksLeft / 20);
-        this.splitTimerEl.style.display = '';
-        this.splitTimerEl.innerHTML = `
-            <span class="powerup-icon">🌪️</span>
-            <span class="powerup-label">SPLIT</span>
-            <span class="powerup-timer">${seconds}s</span>
-        `;
-        if (seconds <= 5) {
-            this.splitTimerEl.classList.add('expiring');
+    /**
+     * Update split ability UI.
+     * @param ticksLeft  Ticks remaining while satellite is active (null = not active).
+     * @param splitReady True when player is F5 and can activate split right now.
+     */
+    updateSplit(ticksLeft: number | null, splitReady: boolean = false): void {
+        if (ticksLeft !== null && ticksLeft > 0) {
+            // Satellite is active — show countdown
+            const seconds = Math.ceil(ticksLeft / 20);
+            this.splitTimerEl.style.display = '';
+            this.splitTimerEl.className = 'powerup-effect split-timer';
+            if (seconds <= 5) this.splitTimerEl.classList.add('expiring');
+            this.splitTimerEl.innerHTML = `
+                <span class="powerup-icon">🌪️</span>
+                <span class="powerup-label">SPLIT</span>
+                <span class="powerup-timer">${seconds}s</span>
+            `;
+        } else if (splitReady) {
+            // F5 reached and no satellite active — show pulsing ready indicator
+            this.splitTimerEl.style.display = '';
+            this.splitTimerEl.className = 'powerup-effect split-ready-pill';
+            this.splitTimerEl.innerHTML = `
+                <span class="powerup-icon">⚡</span>
+                <span class="powerup-label">SPLIT READY</span>
+                <span class="powerup-timer">SPACE</span>
+            `;
         } else {
-            this.splitTimerEl.classList.remove('expiring');
+            this.splitTimerEl.style.display = 'none';
         }
     }
 

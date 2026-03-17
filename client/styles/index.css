@@ -1886,6 +1886,73 @@ body {
   50%       { opacity: 0.4; }
 }
 
+/* Split ability — ready indicator (F5 purple) */
+.split-ready-pill {
+  border-color: rgba(170, 0, 255, 0.7) !important;
+  box-shadow: 0 0 18px rgba(170, 0, 255, 0.45) !important;
+  animation: splitReadyPulse 1.2s ease-in-out infinite !important;
+  cursor: default;
+}
+.split-ready-pill .powerup-label { color: #cc44ff; }
+.split-ready-pill .powerup-timer { color: #cc44ff; font-size: 0.68rem; letter-spacing: 0.5px; }
+
+/* Split active countdown pill */
+.split-timer {
+  border-color: rgba(170, 0, 255, 0.5);
+  box-shadow: 0 0 12px rgba(170, 0, 255, 0.25);
+}
+.split-timer .powerup-timer { color: #cc44ff; }
+
+@keyframes splitReadyPulse {
+  0%, 100% { opacity: 1;   box-shadow: 0 0 18px rgba(170, 0, 255, 0.45); }
+  50%       { opacity: 0.75; box-shadow: 0 0 32px rgba(170, 0, 255, 0.75); }
+}
+
+/* Mobile split button */
+#split-btn-mobile {
+  position: fixed;
+  right: 112px;
+  bottom: 40px;
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  background: rgba(170, 0, 255, 0.15);
+  border: 2px solid rgba(170, 0, 255, 0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  color: #cc44ff;
+  font-family: var(--font);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  display: none; /* shown only at F5 */
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  z-index: 200;
+  user-select: none;
+  -webkit-user-select: none;
+  animation: splitReadyPulse 1.2s ease-in-out infinite;
+  transition: background 0.1s ease, box-shadow 0.1s ease;
+}
+#split-btn-mobile.visible {
+  display: flex;
+}
+#split-btn-mobile.pressed {
+  background: rgba(170, 0, 255, 0.45);
+  border-color: #cc44ff;
+  box-shadow: 0 0 24px rgba(170, 0, 255, 0.65);
+  animation: none;
+}
+/* safe-area inset */
+#split-btn-mobile {
+  right: max(112px, calc(112px + env(safe-area-inset-right)));
+  bottom: max(40px, calc(40px + env(safe-area-inset-bottom)));
+}
+@media (pointer: fine) {
+  #split-btn-mobile { display: none !important; }
+}
+
 /* ============================================
    Seed Input & Display
    ============================================ */

@@ -28,6 +28,8 @@ export class InputHandler {
     private joystickOuter: HTMLElement | null = null;
     private joystickThumb: HTMLElement | null = null;
     private boostBtn: HTMLElement | null = null;
+    private splitBtn: HTMLElement | null = null;
+    private splitBtnTouchId: number | null = null;
 
     private joystick: JoystickState = {
         active: false,
@@ -84,12 +86,19 @@ export class InputHandler {
         boost.id = 'boost-btn-mobile';
         boost.textContent = 'BOOST';
 
+        // ---- Split button ----
+        const split = document.createElement('div');
+        split.id = 'split-btn-mobile';
+        split.textContent = '⚡ SPLIT';
+
         document.body.appendChild(outer);
         document.body.appendChild(boost);
+        document.body.appendChild(split);
 
         this.joystickOuter = outer;
         this.joystickThumb = thumb;
         this.boostBtn = boost;
+        this.splitBtn = split;
 
         // Hide until the game actually starts (prevents overlap with home screen)
         this.hideControls();
@@ -100,6 +109,7 @@ export class InputHandler {
         this.gameActive = true;
         if (this.joystickOuter) this.joystickOuter.style.display = '';
         if (this.boostBtn) this.boostBtn.style.display = '';
+        // splitBtn stays hidden until setSplitAvailable(true)
     }
 
     /** Hide mobile joystick + boost button (call on home/death screen). */
@@ -107,6 +117,18 @@ export class InputHandler {
         this.gameActive = false;
         if (this.joystickOuter) this.joystickOuter.style.display = 'none';
         if (this.boostBtn) this.boostBtn.style.display = 'none';
+        if (this.splitBtn) this.splitBtn.classList.remove('visible');
+    }
+
+    /** Show or hide the mobile SPLIT button based on whether the ability is available. */
+    setSplitAvailable(available: boolean): void {
+        if (!this.splitBtn) return;
+        if (available) {
+            this.splitBtn.classList.add('visible');
+        } else {
+            this.splitBtn.classList.remove('visible');
+            this.splitBtn.classList.remove('pressed');
+        }
     }
 
     // ------------------------------------------------------------------
@@ -177,6 +199,17 @@ export class InputHandler {
                 continue;
             }
 
+            // Check if this touch is on the split button (one-shot)
+            if (this.splitBtn && this.splitBtn.classList.contains('visible') && this.isTouchOnElement(touch, this.splitBtn)) {
+                if (this.splitBtnTouchId === null) {
+                    this.splitBtnTouchId = touch.identifier;
+                    this.splitPending = true;
+                    this.splitBtn.classList.add('pressed');
+                    hapticLight();
+                }
+                continue;
+            }
+
             // Otherwise treat it as a joystick touch (only grab first)
             if (this.joystick.touchId === null) {
                 // Determine joystick origin: wherever the finger lands in the
@@ -226,6 +259,11 @@ export class InputHandler {
                 this.boostTouchId = null;
                 this.boosting = false;
                 this.boostBtn?.classList.remove('pressed');
+            }
+
+            if (touch.identifier === this.splitBtnTouchId) {
+                this.splitBtnTouchId = null;
+                this.splitBtn?.classList.remove('pressed');
             }
         }
     }
