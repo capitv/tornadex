@@ -182,6 +182,9 @@ function isValidInput(input: unknown): input is InputPayload {
     // active must be a boolean
     if (typeof p.active !== 'boolean') return false;
 
+    // split is an optional one-shot flag
+    if (p.split !== undefined && typeof p.split !== 'boolean') return false;
+
     return true;
 }
 

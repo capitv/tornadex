@@ -2,13 +2,13 @@
 // Player (Tornado) - Server-side State
 // ============================================
 
-import { PlayerState, InputPayload, ActiveEffect, PowerUpType } from '../shared/types.js';
+import { PlayerState, InputPayload, ActiveEffect, PowerUpType, SatelliteState } from '../shared/types.js';
 import {
     PLAYER_SPEED, PLAYER_MIN_RADIUS, PLAYER_MAX_RADIUS,
     PLAYER_SPAWN_RADIUS, IDLE_DECAY_RATE, IDLE_SCORE_DECAY,
     WORLD_SIZE, SPEED_SIZE_FACTOR, ABSORB_RATIO,
     POWERUP_DURATION, SPEED_BOOST_MULTIPLIER,
-    SPAWN_PROTECTION_MS,
+    SPAWN_PROTECTION_MS, SPLIT_MIN_RADIUS, SPLIT_DURATION_TICKS,
 } from './constants.js';
 
 // ---- Position history for lag compensation ----
@@ -48,6 +48,9 @@ export class Player {
     _queryGen?: number;
     /** Per-tick sequential index assigned before the collision loop. Used for numeric pair-key dedup. */
     _tickIdx: number = -1;
+
+    /** Active satellite tornado state; null when split ability is not in use. */
+    satellite: SatelliteState | null = null;
     score: number = 0;
     velocityX: number = 0;
     velocityY: number = 0;
@@ -72,6 +75,8 @@ export class Player {
     private posHistoryCount: number = 0;  // how many entries are populated
 
     private input: InputPayload = { angle: 0, active: false, boost: false, seq: 0 };
+    /** Read the current input (used by Game.ts to check one-shot flags like split). */
+    getInput(): InputPayload { return this.input; }
     private idleTicks: number = 0;
     /** Cooldown ticks remaining after stamina hits 0 — prevents E-spam micro-boosts. */
     private boostCooldown: number = 0;
@@ -203,16 +208,52 @@ export class Player {
             }
         }
 
-        // Active size decay starts only after F2 so early progression stays responsive.
-        // It ramps up gradually, then becomes more noticeable for very large tornados.
+        // Active size decay: gentle at F3/F4, noticeably stronger at F5+ so players feel
+        // pressure to keep eating. Without this F5 feels like a permanent plateau.
         if (this.radius > 3.0) {
             let decayRate: number;
-            if (this.radius > 7.0) {
-                decayRate = (this.radius - 3.0) * 0.0005 + (this.radius - 7.0) * 0.00015;
+            if (this.radius > 5.0) {
+                // F5+: clearly perceptible — lose ~1 radius unit every ~25-30s without eating
+                decayRate = (this.radius - 3.0) * 0.0008 + (this.radius - 5.0) * 0.0005;
             } else {
+                // F3-F4: gentle, same as before
                 decayRate = (this.radius - 3.0) * 0.00018;
             }
             this.radius = Math.max(PLAYER_MIN_RADIUS, this.radius - decayRate);
+        }
+
+        // ---- Satellite physics (split ability) ----
+        if (this.satellite !== null) {
+            const sat = this.satellite;
+            sat.ticksLeft--;
+
+            if (sat.ticksLeft <= 0 || sat.radius <= PLAYER_MIN_RADIUS) {
+                // Merge: return satellite radius to main tornado
+                this.radius = Math.min(PLAYER_MAX_RADIUS, this.radius + sat.radius);
+                this.satellite = null;
+            } else {
+                // Move satellite with same direction input as main tornado
+                if (this.input.active) {
+                    const satSpeed = PLAYER_SPEED * Math.max(0.15, 1 - sat.radius * SPEED_SIZE_FACTOR);
+                    sat.velocityX = Math.cos(this.input.angle) * satSpeed;
+                    sat.velocityY = Math.sin(this.input.angle) * satSpeed;
+                } else {
+                    sat.velocityX *= 0.92;
+                    sat.velocityY *= 0.92;
+                }
+                sat.x += sat.velocityX * dt;
+                sat.y += sat.velocityY * dt;
+                sat.x = Math.max(sat.radius, Math.min(WORLD_SIZE - sat.radius, sat.x));
+                sat.y = Math.max(sat.radius, Math.min(WORLD_SIZE - sat.radius, sat.y));
+
+                // Satellite decays at the same rate as main
+                if (sat.radius > 3.0) {
+                    const sDecay = sat.radius > 5.0
+                        ? (sat.radius - 3.0) * 0.0008 + (sat.radius - 5.0) * 0.0005
+                        : (sat.radius - 3.0) * 0.00018;
+                    sat.radius = Math.max(PLAYER_MIN_RADIUS, sat.radius - sDecay);
+                }
+            }
         }
 
         // Apply velocity
@@ -294,6 +335,34 @@ export class Player {
         return { x: this.x, y: this.y, radius: this.radius };
     }
 
+    /**
+     * Activate the split ability: spawn a satellite tornado at half this player's radius.
+     * Returns true if split succeeded, false if already split or below minimum size.
+     */
+    trySplit(): boolean {
+        if (this.satellite !== null) return false;
+        if (this.radius < SPLIT_MIN_RADIUS) return false;
+
+        const halfR = this.radius / 2;
+        this.radius = halfR;
+
+        // Project satellite forward in the current movement direction, 3× radius ahead
+        const angle = this.input.angle;
+        const spawnDist = halfR * 3;
+        this.satellite = {
+            x: this.x + Math.cos(angle) * spawnDist,
+            y: this.y + Math.sin(angle) * spawnDist,
+            radius: halfR,
+            velocityX: Math.cos(angle) * PLAYER_SPEED,
+            velocityY: Math.sin(angle) * PLAYER_SPEED,
+            ticksLeft: SPLIT_DURATION_TICKS,
+        };
+        // Clamp satellite spawn position to world bounds
+        this.satellite.x = Math.max(halfR, Math.min(WORLD_SIZE - halfR, this.satellite.x));
+        this.satellite.y = Math.max(halfR, Math.min(WORLD_SIZE - halfR, this.satellite.y));
+        return true;
+    }
+
     grow(points: number, radiusGrowth: number): void {
         this.score += points;
         // Growth multiplier by radius band — calibrated so each Fujita stage
@@ -354,6 +423,7 @@ export class Player {
         this.rotation = 0;
         this.activeEffects.clear();
         this.boostCooldown = 0;
+        this.satellite = null;
         // Re-grant spawn protection on respawn
         this.spawnProtectedUntil = Date.now() + SPAWN_PROTECTION_MS;
         // Clear position history so lag compensation doesn't use pre-death positions
@@ -366,6 +436,7 @@ export class Player {
         id: '', name: '', x: 0, y: 0, radius: 0, rotation: 0,
         score: 0, velocityX: 0, velocityY: 0, alive: true,
         stamina: 100, activeEffects: [], protected: false, afk: false, lastInputSeq: 0,
+        satellite: undefined,
     };
     private _cachedEffects: ActiveEffect[] = [];
 
@@ -396,6 +467,7 @@ export class Player {
         s.protected = this.isSpawnProtected(now) || this.hasEffect('shield');
         s.afk = this.idleTicks > 60;
         s.lastInputSeq = this.lastInputSeq;
+        s.satellite = this.satellite ?? undefined;
         return s;
     }
 }

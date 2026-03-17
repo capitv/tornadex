@@ -39,6 +39,7 @@ export interface PlayerState {
     protected: boolean;        // true when spawn protection or safe-zone shield is active
     afk: boolean;              // true when idle > 60 ticks (~3 seconds), triggers visual fade
     lastInputSeq: number;      // last input sequence number processed by the server
+    satellite?: SatelliteState; // present while split ability is active
 }
 
 export type WorldObjectType = 'tree' | 'barn' | 'car' | 'animal' | 'trailer_park' | 'stadium';
@@ -152,6 +153,7 @@ export interface DeltaPlayerState {
     protected?: boolean;
     afk?: boolean;
     lastInputSeq?: number;
+    satellite?: SatelliteState | null; // null = satellite just ended/merged; present = active with new state
 }
 
 /**
@@ -175,10 +177,21 @@ export interface LeaderboardEntry {
     radius: number;
 }
 
+/** Live state of a player's satellite tornado (active while split ability is running). */
+export interface SatelliteState {
+    x: number;
+    y: number;
+    radius: number;
+    velocityX: number;
+    velocityY: number;
+    ticksLeft: number;  // ticks remaining before auto-merge (counts down from SPLIT_DURATION_TICKS)
+}
+
 export interface InputPayload {
     angle: number;       // Direction angle in radians
     active: boolean;     // Whether player is providing input (moving)
     boost: boolean;      // Whether E key is held for speed boost
+    split?: boolean;     // One-shot trigger to activate the split ability (Space key)
     seq?: number;        // Monotonically increasing sequence number for reconciliation
 }
 

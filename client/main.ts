@@ -196,6 +196,9 @@ const ADAPTIVE_COOLDOWN   = 30_000;   // ms between auto-downgrades
 // ---- Tornado Meshes (for all players) ----
 const tornadoMeshes: Map<string, TornadoMeshInstance> = new Map();
 
+// ---- Satellite Meshes (keyed by player id — one satellite per F5 player) ----
+const satelliteMeshes: Map<string, TornadoMeshInstance> = new Map();
+
 // ---- Stamina history for remote boost inference ----
 // Stores the stamina value from the previous frame for each player ID.
 // A meaningful drop indicates the remote player is boosting.
@@ -678,8 +681,11 @@ async function startGame(): Promise<void> {
             _stampedInput.angle  = raw.angle;
             _stampedInput.active = raw.active;
             _stampedInput.boost  = raw.boost;
+            _stampedInput.split  = raw.split;
             _stampedInput.seq    = inputSeq;
             network.sendInput(_stampedInput);
+            // Clear split after sending (one-shot)
+            _stampedInput.split  = undefined;
 
             // Cache the sent input so the render loop uses the same values
             lastSentInput.angle  = raw.angle;
@@ -761,6 +767,11 @@ async function handleJoined(data: JoinedPayload): Promise<void> {
         }
     }
     tornadoMeshes.clear();
+    for (const [, satMesh] of satelliteMeshes) {
+        sceneManager.scene.remove(satMesh.group);
+        satMesh.dispose();
+    }
+    satelliteMeshes.clear();
     tornadoOverWater.clear();
     prevStamina.clear();
     powerUpRenderer.dispose();
@@ -937,6 +948,11 @@ network.onJoined((data) => {
         }
     }
     tornadoMeshes.clear();
+    for (const [, satMesh] of satelliteMeshes) {
+        sceneManager.scene.remove(satMesh.group);
+        satMesh.dispose();
+    }
+    satelliteMeshes.clear();
     tornadoOverWater.clear();
     prevStamina.clear();
     powerUpRenderer.dispose();
@@ -1209,6 +1225,11 @@ network.onDeath((killerName: string) => {
             }
         }
         tornadoMeshes.clear();
+        for (const [, satMesh] of satelliteMeshes) {
+            systems.sceneManager.scene.remove(satMesh.group);
+            satMesh.dispose();
+        }
+        satelliteMeshes.clear();
         tornadoOverWater.clear();
         prevStamina.clear();
     }, 5000);
@@ -1495,6 +1516,33 @@ function animate(time: number): void {
             // Destruction trail — dark ground marks under the local tornado
             const trailElevation = worldRenderer.getElevation(camX, camY);
             destructionTrail.tick(dt, camX, camY, trailElevation);
+
+            // ---- Split ability: satellite tornado mesh lifecycle ----
+            const sat = state.satellite;
+            if (sat) {
+                let satMesh = satelliteMeshes.get(id);
+                if (!satMesh) {
+                    // Spawn satellite mesh — use local player's skin
+                    satMesh = systems.createTornadoMesh(false, getSelectedSkin());
+                    satelliteMeshes.set(id, satMesh);
+                    sceneManager.scene.add(satMesh.group);
+                    satMesh.setRadiusImmediate(sat.radius);
+                }
+                satMesh.setRadius(sat.radius);
+                satMesh.setPosition(sat.x, sat.y);
+                satMesh.update(dt, state.rotation + 2.5); // slightly different spin
+                // Split timer HUD (only for local player)
+                hudManager.updateSplit(sat.ticksLeft);
+            } else {
+                // Satellite gone — dispose mesh and hide timer
+                const satMesh = satelliteMeshes.get(id);
+                if (satMesh) {
+                    sceneManager.scene.remove(satMesh.group);
+                    satMesh.dispose();
+                    satelliteMeshes.delete(id);
+                }
+                hudManager.updateSplit(null);
+            }
         }
     }
 

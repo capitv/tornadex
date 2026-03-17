@@ -58,6 +58,7 @@ function copyPlayerState(target: PlayerState, source: PlayerState): void {
     target.protected     = source.protected;
     target.afk           = source.afk;
     target.lastInputSeq  = source.lastInputSeq;
+    target.satellite     = source.satellite;
 }
 
 /** Create a zeroed-out PlayerState used for pre-allocation. */
@@ -276,6 +277,7 @@ export class Interpolation {
             out.protected     = snapB.state.protected;
             out.afk           = snapB.state.afk;
             out.lastInputSeq  = snapB.state.lastInputSeq;
+            out.satellite     = snapB.state.satellite;
         }
 
         return this.outputMap;

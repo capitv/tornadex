@@ -14,7 +14,7 @@ import { AntiCheat } from './AntiCheat.js';
 import {
     TICK_RATE, TICK_INTERVAL, GRID_CELL_SIZE,
     WATER_SPEED_MULT, WATER_DECAY_RATE, MOUNTAIN_DECAY_RATE,
-    PLAYER_MIN_RADIUS, ATTRACTION_RADIUS_MULT,
+    PLAYER_MIN_RADIUS, PLAYER_MAX_RADIUS, ATTRACTION_RADIUS_MULT,
     SAFE_ZONE_MAX_RADIUS,
     POWERUP_COLLECT_RADIUS, GROWTH_BOOST_MULTIPLIER,
     VEHICLE_POINTS, VEHICLE_GROWTH, VEHICLE_SIZE, VEHICLE_COLLISION_RADIUS,
@@ -507,6 +507,38 @@ export class Game {
             player.inSupercell = inSupercell; // Let player know it's in the supercell for physics/growth
 
             player.update(dt, speedMult, now);
+
+            // ---- Split ability trigger ----
+            // input.split is a one-shot flag sent by the client on Space keydown.
+            if (player.getInput().split) {
+                player.trySplit();
+            }
+
+            // ---- Satellite world-object absorption ----
+            if (player.satellite !== null) {
+                const sat = player.satellite;
+                const satNearby = this.grid.query(sat.x, sat.y, sat.radius * ATTRACTION_RADIUS_MULT);
+                for (const entity of satNearby) {
+                    if (typeof entity.id !== 'number') continue;
+                    const obj = this.world.objectsById.get(entity.id as number);
+                    if (!obj || obj.destroyed) continue;
+                    const sdx = sat.x - obj.x;
+                    const sdy = sat.y - obj.y;
+                    const sdistSq = sdx * sdx + sdy * sdy;
+                    const sCollR = sat.radius < 2
+                        ? sat.radius * 1.8
+                        : sat.radius * 1.8 + (sat.radius - 2) * (sat.radius - 2) * 0.5;
+                    const sTotalR = sCollR + obj.size;
+                    if (sat.radius >= obj.size && sdistSq < sTotalR * sTotalR) {
+                        this.world.destroyObject(obj);
+                        const values = OBJECT_VALUES[obj.type];
+                        const growthMult = player.hasEffect('growth') ? GROWTH_BOOST_MULTIPLIER : 1.0;
+                        // Satellite growth goes to satellite radius, score to main player
+                        player.grow(values.points, 0);
+                        sat.radius = Math.min(PLAYER_MAX_RADIUS / 2, sat.radius + values.growth * growthMult * 0.5);
+                    }
+                }
+            }
 
             // ---- Power-up collection (squared distance — no sqrt) ----
             for (const pu of this.world.powerUps) {
@@ -1067,6 +1099,13 @@ export class Game {
                 if (cur.stamina       !== prev.stamina)        dp.stamina       = cur.stamina;
                 if (cur.protected     !== prev.protected)      dp.protected     = cur.protected;
                 if (cur.afk           !== prev.afk)            dp.afk           = cur.afk;
+                // Satellite position changes every tick, so always include when active.
+                // On the tick it disappears (merge), send null so client removes the mesh.
+                const curSat  = cur.satellite;
+                const prevSat = prev.satellite;
+                if (curSat !== undefined || prevSat !== undefined) {
+                    dp.satellite = curSat ?? null;
+                }
                 // activeEffects: compare by length + content (avoid JSON.stringify)
                 const curEff = cur.activeEffects;
                 const prevEff = prev.activeEffects;

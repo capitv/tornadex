@@ -122,3 +122,9 @@ export const SUPERCELL_DURATION_SCHEDULE_TICKS = [
 
 export const SUPERCELL_RADIUS = 150; // Concentrated zone in the center
 export const SUPERCELL_GROWTH_MULT = 2.0;
+
+// ---- Split Ability ----
+/** Minimum radius (F5 threshold) to activate split. */
+export const SPLIT_MIN_RADIUS = 5.5;
+/** How long the satellite persists before auto-merging (30 seconds). */
+export const SPLIT_DURATION_TICKS = TICK_RATE * 30;

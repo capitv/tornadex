@@ -78,6 +78,9 @@ export class HUD {
     private maxSizeEl: HTMLElement;
     private isShowingMaxSize: boolean = false;
 
+    // Split ability timer
+    private splitTimerEl: HTMLElement;
+
     private currentScore: number = 0;
     private displayScore: number = 0;
     private scoreRafId: number | null = null;
@@ -149,6 +152,13 @@ export class HUD {
         this.maxSizeEl.className = 'max-size-msg';
         this.maxSizeEl.textContent = 'MAX SIZE!';
         this.sizeDisplay.appendChild(this.maxSizeEl);
+
+        // Split ability timer pill (shown while satellite is active)
+        this.splitTimerEl = document.createElement('div');
+        this.splitTimerEl.id = 'split-timer';
+        this.splitTimerEl.className = 'powerup-effect split-timer';
+        this.splitTimerEl.style.display = 'none';
+        document.getElementById('powerup-effects')!.appendChild(this.splitTimerEl);
     }
 
     setWorldSize(size: number): void {
@@ -541,6 +551,26 @@ export class HUD {
             } else {
                 el.classList.remove('expiring');
             }
+        }
+    }
+
+    /** Show or hide the split ability countdown timer. ticksLeft=null hides it. */
+    updateSplit(ticksLeft: number | null): void {
+        if (ticksLeft === null || ticksLeft <= 0) {
+            this.splitTimerEl.style.display = 'none';
+            return;
+        }
+        const seconds = Math.ceil(ticksLeft / 20);
+        this.splitTimerEl.style.display = '';
+        this.splitTimerEl.innerHTML = `
+            <span class="powerup-icon">🌪️</span>
+            <span class="powerup-label">SPLIT</span>
+            <span class="powerup-timer">${seconds}s</span>
+        `;
+        if (seconds <= 5) {
+            this.splitTimerEl.classList.add('expiring');
+        } else {
+            this.splitTimerEl.classList.remove('expiring');
         }
     }
 
