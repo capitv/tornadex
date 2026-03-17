@@ -833,10 +833,12 @@ export class TornadoMesh {
         const funnelHeight = r * 10;
 
         // F0 stays VERY thin, F5 becomes massively wide
-        // Using a smooth exponential curve that starts almost flat then rockets up
-        const groundWidth = (r < 2.0)
+        // Using a smooth exponential curve that starts almost flat then rockets up.
+        // F5 (r > 5) gets an additional 30% width boost so it feels imposing on entry.
+        const f5WidthScale = r > 5.0 ? 1.30 : 1.0;
+        const groundWidth = f5WidthScale * ((r < 2.0)
             ? Math.pow(r, 1.5) * 0.12 + 0.10  // F0/F1 are tiny
-            : Math.pow(r, 2.0) * 0.25 + 0.10; // F3+ explode in width
+            : Math.pow(r, 2.0) * 0.25 + 0.10); // F3+ explode in width
 
         const cloudWidth = groundWidth + Math.max(3.0, r * 1.5);     // Always wider than base
 
@@ -979,7 +981,9 @@ export class TornadoMesh {
             const rotSpeed = 3.8 - t * 2.0;
             const angle = seedAngle + this.time * rotSpeed;
 
-            const leanStrength = Math.min(5.0, 3.0 / Math.max(r, 0.5));
+            // Lean proportional to size — F0 stays nearly vertical so smoke follows closely;
+            // F5 leans dramatically into the wind. Old formula (3/r) was inverted: huge lean on tiny F0.
+            const leanStrength = Math.min(3.0, r * 0.4);
             const leanX = -this.velocity.x * t * leanStrength;
             const leanZ = -this.velocity.z * t * leanStrength;
 

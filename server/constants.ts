@@ -14,7 +14,7 @@ export const MAX_PLAYERS = 50;
 
 export const PLAYER_SPEED = 1.0;                // Base movement speed (units/tick)
 export const PLAYER_MIN_RADIUS = 0.8;           // Starting tornado radius
-export const PLAYER_MAX_RADIUS = 25;            // Maximum tornado radius
+export const PLAYER_MAX_RADIUS = 33;            // Maximum tornado radius (+30% for F5 — was 25)
 export const PLAYER_SPAWN_RADIUS = 0.8;
 
 // Growth amounts per absorbed object.

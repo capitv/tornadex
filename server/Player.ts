@@ -166,12 +166,12 @@ export class Player {
                 if (this.stamina <= 0) {
                     this.boostCooldown = 30;
                 }
-            } else {
-                if (this.inSupercell) {
-                    this.stamina = 100;
-                } else {
-                    this.stamina = Math.min(100, this.stamina + 0.4); // Regens in ~12.5s
-                }
+            } else if (this.inSupercell) {
+                this.stamina = 100;
+            } else if (!this.input.boost) {
+                // Only regen when key is fully released — holding E during cooldown
+                // keeps the player in a "forced rest" state, preventing micro-boost exploits.
+                this.stamina = Math.min(100, this.stamina + 0.4); // Regens in ~12.5s
             }
         } else {
             this.idleTicks++;
@@ -314,9 +314,9 @@ export class Player {
         } else if (this.radius < 4.0) {
             growthMult = 0.85;
         } else if (this.radius < 6.0) {
-            growthMult = 0.7;
+            growthMult = 0.35; // F4 range: halved (was 0.70) — reaching F5 now takes ~2× longer
         } else {
-            growthMult = 2.4 / this.radius;
+            growthMult = 1.2 / this.radius; // F5 range: halved (was 2.4/r)
         }
         
         let finalGrowth = radiusGrowth * growthMult;
