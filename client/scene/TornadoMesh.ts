@@ -104,6 +104,10 @@ export class TornadoMesh {
     private visibleBoxes:  number = 0;
     private visibleFlats:  number = 0;
     private visibleChunks: number = 0;
+    // Previous frame counts — lets us skip invisible slots that are already parked
+    private _prevVisibleBoxes:  number = BOX_SLOTS;
+    private _prevVisibleFlats:  number = FLAT_SLOTS;
+    private _prevVisibleChunks: number = CHUNK_SLOTS;
 
     private baseRadius: number = 1;
     /** Target radius that baseRadius lerps toward each frame. */
@@ -1059,32 +1063,43 @@ export class TornadoMesh {
             - this.velocity.z * 0.4 * shapedLeanStrength;
         const debrisSizeScale    = Math.max(0.35, Math.min(r * 0.35, 2.2));
 
-        for (let i = 0; i < BOX_SLOTS; i++) {
+        // Only iterate max(current, prev) slots — visible ones animate, newly-hidden ones
+        // get parked once, already-parked ones are skipped entirely. Eliminates all shaped-
+        // debris GPU uploads at F0 where all counts are 0.
+        const maxBoxes  = Math.max(this.visibleBoxes,  this._prevVisibleBoxes);
+        const maxFlats  = Math.max(this.visibleFlats,  this._prevVisibleFlats);
+        const maxChunks = Math.max(this.visibleChunks, this._prevVisibleChunks);
+
+        for (let i = 0; i < maxBoxes; i++) {
             this._updateShapedSlot(
                 this.boxDebris, i, this.boxSeeds, i < this.visibleBoxes,
                 funnelHeight, groundWidth, cloudWidth,
                 debrisSizeScale, sharedWobbleX, sharedWobbleZ,
             );
         }
-        this.boxDebris.instanceMatrix.needsUpdate = true;
+        if (maxBoxes > 0) this.boxDebris.instanceMatrix.needsUpdate = true;
 
-        for (let i = 0; i < FLAT_SLOTS; i++) {
+        for (let i = 0; i < maxFlats; i++) {
             this._updateShapedSlot(
                 this.flatDebris, i, this.flatSeeds, i < this.visibleFlats,
                 funnelHeight, groundWidth, cloudWidth,
                 debrisSizeScale, sharedWobbleX, sharedWobbleZ,
             );
         }
-        this.flatDebris.instanceMatrix.needsUpdate = true;
+        if (maxFlats > 0) this.flatDebris.instanceMatrix.needsUpdate = true;
 
-        for (let i = 0; i < CHUNK_SLOTS; i++) {
+        for (let i = 0; i < maxChunks; i++) {
             this._updateShapedSlot(
                 this.chunkDebris, i, this.chunkSeeds, i < this.visibleChunks,
                 funnelHeight, groundWidth, cloudWidth,
                 debrisSizeScale, sharedWobbleX, sharedWobbleZ,
             );
         }
-        this.chunkDebris.instanceMatrix.needsUpdate = true;
+        if (maxChunks > 0) this.chunkDebris.instanceMatrix.needsUpdate = true;
+
+        this._prevVisibleBoxes  = this.visibleBoxes;
+        this._prevVisibleFlats  = this.visibleFlats;
+        this._prevVisibleChunks = this.visibleChunks;
 
         // ==========================================
         // 8. SHIELD GLOW ANIMATION (Spawn / Safe-Zone Protection)
