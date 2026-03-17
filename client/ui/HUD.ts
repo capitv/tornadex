@@ -87,6 +87,11 @@ export class HUD {
     // Local player pulse animation state
     private minimapPulse: number = 0;
 
+    // Pre-allocated div reused by escapeHtml() to avoid per-call DOM allocation
+    private readonly _escapeDiv: HTMLDivElement = document.createElement('div');
+    // Pre-allocated array reused by updateMinimap() to avoid per-frame allocation
+    private readonly _minimapOthers: PlayerState[] = [];
+
     constructor() {
         this.scoreEl        = document.getElementById('score-value')!;
         this.categoryName   = document.getElementById('category-name')!;
@@ -318,20 +323,15 @@ export class HUD {
         const now = Date.now();
         if (now - this.lastLeaderboardUpdate < 200) return; // 5x/sec throttle
         this.lastLeaderboardUpdate = now;
-        let html = '';
+        const parts: string[] = [];
         for (let i = 0; i < entries.length; i++) {
             const entry = entries[i];
             const cat = this.getCategoryForRadius(entry.radius);
             const catColor = this.getCategoryColor(cat);
             const meClass = entry.name === localName ? ' is-me' : '';
-            html += `<li class="${meClass}">
-                <span class="lb-rank">${i + 1}</span>
-                <span class="lb-name">${this.escapeHtml(entry.name)}</span>
-                <span class="lb-cat" style="background:${catColor}22;color:${catColor}">${cat}</span>
-                <span class="lb-score">${Math.floor(entry.score)}</span>
-            </li>`;
+            parts.push(`<li class="${meClass}"><span class="lb-rank">${i + 1}</span><span class="lb-name">${this.escapeHtml(entry.name)}</span><span class="lb-cat" style="background:${catColor}22;color:${catColor}">${cat}</span><span class="lb-score">${Math.floor(entry.score)}</span></li>`);
         }
-        this.leaderboardList.innerHTML = html;
+        this.leaderboardList.innerHTML = parts.join('');
     }
 
     // ---- Minimap (throttled to ~15fps) ----
@@ -392,13 +392,14 @@ export class HUD {
         }
 
         // Draw other players first (so local is always on top)
-        const others: PlayerState[] = [];
+        this._minimapOthers.length = 0;
         let local: PlayerState | null = null;
         for (const p of players) {
             if (!p.alive) continue;
             if (p.id === localId) local = p;
-            else others.push(p);
+            else this._minimapOthers.push(p);
         }
+        const others = this._minimapOthers;
 
         for (const p of others) {
             const px = p.x * scale;
@@ -643,8 +644,7 @@ export class HUD {
     }
 
     private escapeHtml(str: string): string {
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
+        this._escapeDiv.textContent = str;
+        return this._escapeDiv.innerHTML;
     }
 }
