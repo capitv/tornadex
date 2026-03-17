@@ -24,6 +24,8 @@ const hud                = document.getElementById('hud')!;
 const playBtn            = document.getElementById('play-btn')!;
 const respawnBtn         = document.getElementById('respawn-btn')!;
 const nameInput          = document.getElementById('player-name') as HTMLInputElement;
+// Restore saved name so the player doesn't retype it every session
+try { const saved = localStorage.getItem('tornado_player_name'); if (saved) nameInput.value = saved; } catch { /* storage blocked */ }
 const seedInput          = document.getElementById('seed-input') as HTMLInputElement;
 const seedDisplay        = document.getElementById('seed-display')!;
 const seedHud            = document.getElementById('seed-hud')!;
@@ -170,6 +172,17 @@ const debugMetrics = {
     // Memory
     jsHeapMB: 0,
 };
+
+// ---- Adaptive quality (auto-downgrade when FPS is sustained low) ----
+// Runs independently from the debug FPS display — always active.
+const _adaptiveFrameTimes = new Float32Array(120); // 2-second window at 60fps
+let _adaptiveFrameIdx = 0;
+let _adaptiveFrameFilled = 0;
+let _adaptiveLastDowngrade = 0;       // timestamp of last downgrade
+const ADAPTIVE_LOW_FPS    = 30;       // threshold: below this is "slow"
+const ADAPTIVE_WINDOW     = 120;      // frames to sample (2s at 60fps)
+const ADAPTIVE_SLOW_RATIO = 0.75;     // 75% slow frames → downgrade
+const ADAPTIVE_COOLDOWN   = 30_000;   // ms between auto-downgrades
 
 // ---- Tornado Meshes (for all players) ----
 const tornadoMeshes: Map<string, TornadoMeshInstance> = new Map();
@@ -608,6 +621,7 @@ async function startGame(): Promise<void> {
     await ensureGameSystems();
 
     playerName = nameInput.value.trim() || 'Tornado';
+    try { localStorage.setItem('tornado_player_name', playerName); } catch { /* storage blocked */ }
     mainMenu.classList.add('hidden');
     deathScreen.classList.add('hidden');
     deathVignette.classList.remove('active');
@@ -1219,6 +1233,34 @@ function animate(time: number): void {
     const dt = Math.min(time - lastTime, 100); // cap delta
     lastTime = time;
     frameCount++;
+
+    // ---- Adaptive quality: sample every frame, downgrade after 2s of low FPS ----
+    _adaptiveFrameTimes[_adaptiveFrameIdx] = dt;
+    _adaptiveFrameIdx = (_adaptiveFrameIdx + 1) % ADAPTIVE_WINDOW;
+    if (_adaptiveFrameFilled < ADAPTIVE_WINDOW) _adaptiveFrameFilled++;
+    if (_adaptiveFrameFilled >= ADAPTIVE_WINDOW) {
+        const now = Date.now();
+        if (now - _adaptiveLastDowngrade > ADAPTIVE_COOLDOWN) {
+            const slowThresholdMs = 1000 / ADAPTIVE_LOW_FPS;
+            let slowCount = 0;
+            for (let i = 0; i < ADAPTIVE_WINDOW; i++) if (_adaptiveFrameTimes[i] > slowThresholdMs) slowCount++;
+            if (slowCount / ADAPTIVE_WINDOW >= ADAPTIVE_SLOW_RATIO) {
+                const cur = getGraphicsQuality();
+                const next = cur === 'high' ? 'medium' : cur === 'medium' ? 'low' : null;
+                if (next) {
+                    setGraphicsQuality(next);
+                    _adaptiveLastDowngrade = now;
+                    _adaptiveFrameFilled = 0; // reset window after downgrade
+                    // Brief toast so the player knows what happened
+                    const toast = document.createElement('div');
+                    toast.textContent = `Graphics reduced to ${next.toUpperCase()} for better performance`;
+                    toast.style.cssText = 'position:fixed;bottom:20%;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.75);color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:9999;pointer-events:none';
+                    document.body.appendChild(toast);
+                    setTimeout(() => toast.remove(), 3000);
+                }
+            }
+        }
+    }
 
     // Always update the skybox — clouds + lightning animate even on the menu screen
     sceneManager.update(dt);

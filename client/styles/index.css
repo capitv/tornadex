@@ -1566,6 +1566,25 @@ body {
   box-shadow: 0 0 22px rgba(0, 212, 170, 0.55);
 }
 
+/* ---- Safe-area inset support (notch / Dynamic Island / home bar) ----
+   viewport-fit=cover is set in index.html so env() values are non-zero on
+   notched devices. We offset controls away from the unsafe areas. */
+#joystick-outer {
+  left: max(24px, calc(24px + env(safe-area-inset-left)));
+  bottom: max(24px, calc(24px + env(safe-area-inset-bottom)));
+}
+#boost-btn-mobile {
+  right: max(28px, calc(28px + env(safe-area-inset-right)));
+  bottom: max(40px, calc(40px + env(safe-area-inset-bottom)));
+}
+/* Score (top-left) and leaderboard (top-right) need top inset for status bar */
+#score-display {
+  top: max(12px, calc(12px + env(safe-area-inset-top)));
+}
+#leaderboard {
+  top: max(12px, calc(12px + env(safe-area-inset-top)));
+}
+
 /* Hide joystick controls on precise-pointer (desktop mouse) devices.
    Touch devices report pointer: coarse; desktops report pointer: fine. */
 @media (pointer: fine) {

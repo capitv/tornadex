@@ -47,6 +47,21 @@ function dpr(): number {
     return typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
 }
 
+/**
+ * Returns true when running on a touch/mobile device (Capacitor WebView or browser).
+ * On mobile we cap pixel ratio to 1.5 and never enable shadows — the GPU budget
+ * on even flagship phones can't sustain them at 60 FPS alongside WebGL game content.
+ */
+function isMobileDevice(): boolean {
+    if (typeof window === 'undefined') return false;
+    return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+}
+
+/** Mobile-safe pixel ratio: never above 1.5. Prevents thermal throttle on high-DPI phones. */
+function mobileDpr(max: number): number {
+    return isMobileDevice() ? Math.min(dpr(), 1.5) : Math.min(dpr(), max);
+}
+
 const PRESETS: Record<GraphicsQuality, () => GraphicsPreset> = {
     low: () => ({
         pixelRatio: 1,
@@ -65,9 +80,8 @@ const PRESETS: Record<GraphicsQuality, () => GraphicsPreset> = {
         waterspoutChance: 0.25,
     }),
     medium: () => ({
-        // This is the original / default setting
-        pixelRatio: Math.min(dpr(), 2),
-        antialias: true,
+        pixelRatio: mobileDpr(2),
+        antialias: !isMobileDevice(), // antialias too expensive on mobile
         fogFar: 1000,
         debrisCount: 80,
         dustCount: 100,
@@ -75,23 +89,23 @@ const PRESETS: Record<GraphicsQuality, () => GraphicsPreset> = {
         radialSegments: 24,
         maxParticles: 500,
         worldCullDistance: Infinity,
-        shadows: false,
+        shadows: false, // never shadows on mobile; desktop keeps false too (cost vs gain)
         cloudDeformation: true,
         suctionEffect: true,
         localDustChance: 0.3,
         waterspoutChance: 0.85,
     }),
     high: () => ({
-        pixelRatio: Math.min(dpr(), 3),
+        pixelRatio: mobileDpr(3), // mobile capped at 1.5, desktop allows up to 3
         antialias: true,
         fogFar: 1500,
         debrisCount: 120,
         dustCount: 150,
         cloudCount: 220,
-        radialSegments: 32,
-        maxParticles: 1000,
+        radialSegments: isMobileDevice() ? 24 : 32, // fewer segments on mobile GPU
+        maxParticles: isMobileDevice() ? 500 : 1000,
         worldCullDistance: Infinity,
-        shadows: true,
+        shadows: !isMobileDevice(), // shadows only on desktop — too expensive for mobile GPU
         cloudDeformation: true,
         suctionEffect: true,
         localDustChance: 0.45,
