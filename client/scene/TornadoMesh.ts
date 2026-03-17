@@ -45,6 +45,9 @@ const AFK_FADE_SPEED = 0.001;
 // canvas allocation and GPU texture upload for every tornado in the game.
 const smokeTexture = getSmokeTexture();
 
+// Inner cone scale factors — hoisted out of update() to avoid per-frame array allocation
+const CONE_SCALES = [0.60, 0.15] as const;
+
 export class TornadoMesh {
     group: THREE.Group;
 
@@ -857,10 +860,9 @@ export class TornadoMesh {
         // Scale inner solid cones to fill the funnel volume
         const leanStr = Math.min(5.0, 3.0 / Math.max(r, 0.5));
         // 2 inner cones: outer fill (60%) + tight inner core (15%)
-        const coneScales = [0.60, 0.15];
         for (let ci = 0; ci < this.innerCones.length; ci++) {
             const cone = this.innerCones[ci];
-            const s = coneScales[ci] ?? 0.15;
+            const s = CONE_SCALES[ci] ?? 0.15;
             const coneBaseR = groundWidth * s;
             const coneTopR  = cloudWidth * s;
             const avgR = (coneBaseR + coneTopR) * 0.5;

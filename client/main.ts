@@ -1233,11 +1233,19 @@ network.onReconnect(() => {
 });
 
 // ---- Render Loop ----
+const TARGET_FRAME_MS = 1000 / 60; // cap at 60 fps — server is 20 Hz, higher fps just inflates GC
 let lastTime = performance.now();
+let _lastFrameTime = 0;
 let frameCount = 0;
 
 function animate(time: number): void {
     requestAnimationFrame(animate);
+
+    // Frame limiter: skip if we're ahead of the 60fps budget.
+    // Subtract the remainder so drift doesn't accumulate over time.
+    const elapsed = time - _lastFrameTime;
+    if (elapsed < TARGET_FRAME_MS) return;
+    _lastFrameTime = time - (elapsed % TARGET_FRAME_MS);
 
     const systems = gameSystems;
     if (!systems) return;
