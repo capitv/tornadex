@@ -13,6 +13,7 @@ import { WORLD_SIZE } from '../shared/worldConfig.js';
 import { getFujitaCategory } from '../shared/fujita.js';
 import { generateStaticWorldLayout, type StaticWorldLayout } from '../shared/worldgen.js';
 import type { GameState, WorldObject, WorldObjectType, TerrainZone, SafeZone, PowerUp, InputPayload, JoinedPayload } from '../shared/types.js';
+import { hapticLight, hapticMedium, hapticHeavy, hapticSuccess, lockLandscape, hideStatusBar, showStatusBar, watchNetwork } from './mobile/MobileServices.js';
 
 // ---- DOM Elements ----
 const canvas             = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -69,6 +70,14 @@ const network = new NetworkManager();
 const interpolation = new Interpolation();
 const input = new InputHandler(canvas);
 const hudManager = new HUD();
+
+// On mobile, reconnect Socket.IO proactively when the device regains connectivity
+// (e.g. WiFi ↔ 4G switch). Without this the socket may stay disconnected until timeout.
+watchNetwork((connected) => {
+    if (connected && !network.socket?.connected) {
+        network.socket?.connect();
+    }
+});
 
 // ============================================================
 // Debug Overlay — toggled with F3 key
@@ -622,6 +631,8 @@ async function startGame(): Promise<void> {
 
     playerName = nameInput.value.trim() || 'Tornado';
     try { localStorage.setItem('tornado_player_name', playerName); } catch { /* storage blocked */ }
+    lockLandscape();
+    hideStatusBar();
     mainMenu.classList.add('hidden');
     deathScreen.classList.add('hidden');
     deathVignette.classList.remove('active');
@@ -901,6 +912,7 @@ function processGameState(state: GameState): void {
     if (state.kills && state.kills.length > 0) {
         for (const kill of state.kills) {
             hudManager.addKill(kill.killer, kill.victim, kill.killerRadius, playerName);
+            if (kill.killer === playerName) hapticSuccess(); // you absorbed someone
         }
     }
 }
@@ -1120,12 +1132,14 @@ network.onState((state: GameState) => {
     if (state.kills && state.kills.length > 0) {
         for (const kill of state.kills) {
             hudManager.addKill(kill.killer, kill.victim, kill.killerRadius, playerName);
+            if (kill.killer === playerName) hapticSuccess(); // you absorbed someone
         }
     }
     */
 });
 
 network.onDeath((killerName: string) => {
+    hapticHeavy(); // strong vibration on death
     const systems = gameSystems;
     isPlaying = false;
     input.hideControls();

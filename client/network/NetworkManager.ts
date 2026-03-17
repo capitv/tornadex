@@ -15,7 +15,7 @@ import type {
 } from '../../shared/types.js';
 
 export class NetworkManager {
-    private socket: Socket<ServerToClientEvents, ClientToServerEvents>;
+    socket: Socket<ServerToClientEvents, ClientToServerEvents>;
     private onStateCallback: ((state: GameState) => void) | null = null;
     private onDeathCallback: ((killerName: string) => void) | null = null;
     private onJoinedCallback: ((data: JoinedPayload) => void) | null = null;

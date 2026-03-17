@@ -11,12 +11,19 @@
     "start": "node dist/server/index.js"
   },
   "dependencies": {
+    "@capacitor/android": "^8.2.0",
+    "@capacitor/core": "^8.2.0",
+    "@capacitor/haptics": "^8.0.1",
+    "@capacitor/network": "^8.0.1",
+    "@capacitor/screen-orientation": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.1",
     "express": "^4.21.0",
     "socket.io": "^4.7.5",
     "socket.io-client": "^4.7.5",
     "three": "^0.170.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^7.6.0",
     "@types/express": "^4.17.21",
     "@types/three": "^0.170.0",
     "concurrently": "^9.0.0",

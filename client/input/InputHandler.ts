@@ -3,6 +3,7 @@
 // ============================================
 
 import type { InputPayload } from '../../shared/types.js';
+import { hapticLight } from '../mobile/MobileServices.js';
 
 // ---- Virtual Joystick (mobile only) ----
 interface JoystickState {
@@ -169,6 +170,7 @@ export class InputHandler {
                     this.boostTouchId = touch.identifier;
                     this.boosting = true;
                     this.boostBtn.classList.add('pressed');
+                    hapticLight(); // tactile feedback on boost press
                 }
                 continue;
             }
