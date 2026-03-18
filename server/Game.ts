@@ -14,7 +14,7 @@ import { AntiCheat } from './AntiCheat.js';
 import {
     TICK_RATE, TICK_INTERVAL, GRID_CELL_SIZE,
     WATER_SPEED_MULT, WATER_DECAY_RATE, MOUNTAIN_DECAY_RATE,
-    PLAYER_MIN_RADIUS, PLAYER_MAX_RADIUS, ATTRACTION_RADIUS_MULT,
+    PLAYER_MIN_RADIUS, PLAYER_MAX_RADIUS, ATTRACTION_RADIUS_MULT, ABSORB_RATIO,
     SAFE_ZONE_MAX_RADIUS,
     POWERUP_COLLECT_RADIUS, GROWTH_BOOST_MULTIPLIER,
     VEHICLE_POINTS, VEHICLE_GROWTH, VEHICLE_SIZE, VEHICLE_COLLISION_RADIUS,
@@ -536,6 +536,36 @@ export class Game {
                         // Satellite growth goes to satellite radius, score to main player
                         player.grow(values.points, 0);
                         sat.radius = Math.min(PLAYER_MAX_RADIUS / 2, sat.radius + values.growth * growthMult * 0.5);
+                    }
+                }
+            }
+
+            // ---- Satellite vs player absorption ----
+            // The satellite can absorb other players that are smaller than it.
+            if (player.satellite !== null && !this.absorbedThisTick.has(player.id)) {
+                const sat = player.satellite;
+                const satNearbyPlayers = this.grid.query(sat.x, sat.y, sat.radius * 3 + 5);
+                for (const entity of satNearbyPlayers) {
+                    if (typeof entity.id !== 'string') continue;
+                    const victim = this.players.get(entity.id as string);
+                    if (!victim || !victim.alive || victim === player) continue;
+                    if (this.absorbedThisTick.has(victim.id)) continue;
+                    const vdx = sat.x - victim.x;
+                    const vdy = sat.y - victim.y;
+                    const vDistSq = vdx * vdx + vdy * vdy;
+                    const touchR = sat.radius + victim.radius;
+                    if (sat.radius >= victim.radius * ABSORB_RATIO && vDistSq < touchR * touchR) {
+                        if (!victim.isSpawnProtected(now) && !victim.hasEffect('shield')) {
+                            pendingKills.push({ killer: player.name, victim: victim.name, killerRadius: player.radius });
+                            player.grow(victim.score * 0.3, victim.radius * 0.12);
+                            victim.alive = false;
+                            this.absorbedThisTick.add(victim.id);
+                            this.submitToLeaderboard(victim);
+                            this.botManager.notifyBotDied(victim.id);
+                            if (this.onPlayerDeath) {
+                                this.onPlayerDeath(victim.id, player.name);
+                            }
+                        }
                     }
                 }
             }

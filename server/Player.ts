@@ -223,6 +223,8 @@ export class Player {
         }
 
         // ---- Satellite physics (split ability) ----
+        // The satellite stays projected ahead of the main tornado in the
+        // movement direction (like an extended arm that sweeps objects).
         if (this.satellite !== null) {
             const sat = this.satellite;
             sat.ticksLeft--;
@@ -232,27 +234,23 @@ export class Player {
                 this.radius = Math.min(PLAYER_MAX_RADIUS, this.radius + sat.radius);
                 this.satellite = null;
             } else {
-                // Move satellite with same direction input as main tornado
-                if (this.input.active) {
-                    const satSpeed = PLAYER_SPEED * Math.max(0.15, 1 - sat.radius * SPEED_SIZE_FACTOR);
-                    sat.velocityX = Math.cos(this.input.angle) * satSpeed;
-                    sat.velocityY = Math.sin(this.input.angle) * satSpeed;
-                } else {
-                    sat.velocityX *= 0.92;
-                    sat.velocityY *= 0.92;
-                }
-                sat.x += sat.velocityX * dt;
-                sat.y += sat.velocityY * dt;
+                // Target position: ahead of main tornado in movement direction
+                const projectDist = this.radius * 3;
+                const targetX = this.x + Math.cos(this.input.angle) * projectDist;
+                const targetY = this.y + Math.sin(this.input.angle) * projectDist;
+
+                // Smooth follow (lerp toward target so it doesn't teleport)
+                const lerpRate = 0.25;
+                sat.x += (targetX - sat.x) * lerpRate;
+                sat.y += (targetY - sat.y) * lerpRate;
+
+                // Clamp to world bounds
                 sat.x = Math.max(sat.radius, Math.min(WORLD_SIZE - sat.radius, sat.x));
                 sat.y = Math.max(sat.radius, Math.min(WORLD_SIZE - sat.radius, sat.y));
 
-                // Satellite decays at the same rate as main
-                if (sat.radius > 3.0) {
-                    const sDecay = sat.radius > 5.0
-                        ? (sat.radius - 3.0) * 0.0008 + (sat.radius - 5.0) * 0.0005
-                        : (sat.radius - 3.0) * 0.00018;
-                    sat.radius = Math.max(PLAYER_MIN_RADIUS, sat.radius - sDecay);
-                }
+                // Store velocity for client interpolation
+                sat.velocityX = sat.x - (sat.x - (targetX - sat.x) * lerpRate);
+                sat.velocityY = sat.y - (sat.y - (targetY - sat.y) * lerpRate);
             }
         }
 
@@ -336,30 +334,32 @@ export class Player {
     }
 
     /**
-     * Activate the split ability: spawn a satellite tornado at half this player's radius.
-     * Returns true if split succeeded, false if already split or below minimum size.
+     * Activate the split ability: project a smaller satellite tornado ahead.
+     * Main keeps 80% radius; satellite gets 50% of original radius.
+     * The satellite stays projected ahead of the main in the movement direction.
      */
     trySplit(): boolean {
         if (this.satellite !== null) return false;
         if (this.radius < SPLIT_MIN_RADIUS) return false;
 
-        const halfR = this.radius / 2;
-        this.radius = halfR;
+        const originalR = this.radius;
+        const satRadius = originalR * 0.5;
+        this.radius = originalR * 0.8;
 
-        // Project satellite forward in the current movement direction, 3× radius ahead
+        // Project satellite forward in the current movement direction
         const angle = this.input.angle;
-        const spawnDist = halfR * 3;
+        const projectDist = this.radius * 3;
         this.satellite = {
-            x: this.x + Math.cos(angle) * spawnDist,
-            y: this.y + Math.sin(angle) * spawnDist,
-            radius: halfR,
-            velocityX: Math.cos(angle) * PLAYER_SPEED,
-            velocityY: Math.sin(angle) * PLAYER_SPEED,
+            x: this.x + Math.cos(angle) * projectDist,
+            y: this.y + Math.sin(angle) * projectDist,
+            radius: satRadius,
+            velocityX: 0,
+            velocityY: 0,
             ticksLeft: SPLIT_DURATION_TICKS,
         };
         // Clamp satellite spawn position to world bounds
-        this.satellite.x = Math.max(halfR, Math.min(WORLD_SIZE - halfR, this.satellite.x));
-        this.satellite.y = Math.max(halfR, Math.min(WORLD_SIZE - halfR, this.satellite.y));
+        this.satellite.x = Math.max(satRadius, Math.min(WORLD_SIZE - satRadius, this.satellite.x));
+        this.satellite.y = Math.max(satRadius, Math.min(WORLD_SIZE - satRadius, this.satellite.y));
         return true;
     }
 
